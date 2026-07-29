@@ -15,6 +15,10 @@ allowBuilds:
   electron: true
   electron-winstaller: false
   esbuild: true
+  # Native FFI shim pulled in by @github/copilot-sdk. Only the SDK's
+  # in-process runtime host uses it — we drive the Copilot CLI over stdio —
+  # but its install script is what selects the prebuilt platform binary.
+  koffi: true
   msgpackr-extract: true
   msw: false
   node-pty: true

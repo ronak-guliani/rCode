@@ -1205,9 +1205,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               }
 
               assert.deepStrictEqual(cachedProvider?.models, [authoritativeProvider.models[0]!]);
-              assert.deepStrictEqual((yield* registry.getProviders)[0]?.models, [
-                authoritativeProvider.models[0]!,
-              ]);
+              const openCodeProvider = (yield* registry.getProviders).find(
+                (provider) => provider.instanceId === openCodeInstanceId,
+              );
+              assert.deepStrictEqual(openCodeProvider?.models, [authoritativeProvider.models[0]!]);
             }).pipe(Effect.provide(runtimeServices));
           }),
       );
@@ -1805,6 +1806,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               assert.deepStrictEqual(providers.map((provider) => provider.instanceId).toSorted(), [
                 "claudeAgent",
                 "codex",
+                "copilot",
                 "cursor",
                 "grok",
                 "opencode",

@@ -131,6 +131,7 @@ const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
+const COPILOT_DRIVER_KIND = ProviderDriverKind.make("copilot");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
 
 export const DEFAULT_MODEL = "gpt-5.6-sol";
@@ -152,6 +153,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CLAUDE_DRIVER_KIND]: "claude-sonnet-5",
   [CURSOR_DRIVER_KIND]: "auto",
   [GROK_DRIVER_KIND]: "grok-build",
+  [COPILOT_DRIVER_KIND]: "claude-sonnet-4.6",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
 };
 
@@ -162,6 +164,7 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CODEX_DRIVER_KIND]: DEFAULT_TEXT_GENERATION_MODEL,
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
+  [COPILOT_DRIVER_KIND]: "gpt-5-mini",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
 };
 
@@ -211,6 +214,25 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "opus-4.5-thinking": "claude-opus-4-5",
     "opus-4.5": "claude-opus-4-5",
   },
+  // Copilot exposes vendor-native slugs (`claude-sonnet-4.6`, `gemini-3.1-pro`),
+  // which collide with the dotted/dashed spellings users type from muscle
+  // memory in the other providers. Normalize the common ones so a slug copied
+  // out of the Claude or Codex picker still resolves here.
+  [COPILOT_DRIVER_KIND]: {
+    sonnet: "claude-sonnet-4.6",
+    "sonnet-4.6": "claude-sonnet-4.6",
+    "claude-sonnet-4-6": "claude-sonnet-4.6",
+    opus: "claude-opus-4.7",
+    "opus-4.7": "claude-opus-4.7",
+    "claude-opus-4-7": "claude-opus-4.7",
+    "opus-4.6": "claude-opus-4.6",
+    "claude-opus-4-6": "claude-opus-4.6",
+    haiku: "claude-haiku-4.5",
+    "haiku-4.5": "claude-haiku-4.5",
+    "claude-haiku-4-5": "claude-haiku-4.5",
+    "gemini-3.1": "gemini-3.1-pro",
+    "gpt-5.1": "gpt-5.1-codex",
+  },
   [OPENCODE_DRIVER_KIND]: {},
 };
 
@@ -221,5 +243,6 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CLAUDE_DRIVER_KIND]: "Claude",
   [CURSOR_DRIVER_KIND]: "Cursor",
   [GROK_DRIVER_KIND]: "Grok",
+  [COPILOT_DRIVER_KIND]: "GitHub Copilot",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
 };
