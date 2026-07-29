@@ -69,6 +69,24 @@ export const ServerProviderModel = Schema.Struct({
   isCustom: Schema.Boolean,
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
+  /**
+   * Total context window the provider advertises for this model, in tokens.
+   *
+   * Unlike Claude's `contextWindow` option descriptor — a *choice* the user
+   * makes between two variants of one model — this is a fixed per-model limit
+   * reported by the provider (GitHub Copilot returns it as
+   * `capabilities.limits.max_context_window_tokens`). It is presentational
+   * only: the picker renders it next to the model name so users can compare
+   * models, and nothing routes on it. Omitted when the provider does not
+   * report a limit.
+   */
+  maxContextWindowTokens: Schema.optional(PositiveInt),
+  /**
+   * Premium-request cost multiplier for subscription-metered providers.
+   * GitHub Copilot bills each turn as `multiplier` premium requests against
+   * the plan's monthly allowance (0 for models included at no extra cost).
+   */
+  billingMultiplier: Schema.optional(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
   capabilities: Schema.NullOr(ModelCapabilities),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
