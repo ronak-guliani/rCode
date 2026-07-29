@@ -2,6 +2,8 @@ import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contr
 import { memo } from "react";
 import { StarIcon } from "lucide-react";
 import {
+  formatBillingMultiplier,
+  formatContextWindowTokens,
   getDisplayModelName,
   getTriggerDisplayModelLabel,
   type ModelEsque,
@@ -42,6 +44,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
   const providerLabel = props.model.subProvider
     ? `${props.providerDisplayName} · ${props.model.subProvider}`
     : props.providerDisplayName;
+  const contextWindowLabel = formatContextWindowTokens(props.model.maxContextWindowTokens);
+  const billingLabel = formatBillingMultiplier(props.model.billingMultiplier);
 
   const row = (
     <ComboboxItem
@@ -76,12 +80,36 @@ export const ModelListRow = memo(function ModelListRow(props: {
             </span>
           ) : null}
         </div>
-        {props.showProvider && (
+        {(props.showProvider || contextWindowLabel || billingLabel) && (
           <div className="mt-1 flex items-center gap-1.5">
-            {ProviderIcon ? <ProviderIcon className="size-3 shrink-0" /> : null}
-            <span className="truncate text-xs font-normal leading-snug text-muted-foreground/70">
-              {providerLabel}
-            </span>
+            {props.showProvider ? (
+              <>
+                {ProviderIcon ? <ProviderIcon className="size-3 shrink-0" /> : null}
+                <span className="truncate text-xs font-normal leading-snug text-muted-foreground/70">
+                  {providerLabel}
+                </span>
+              </>
+            ) : null}
+            {contextWindowLabel ? (
+              <span
+                className="shrink-0 text-[10px] font-normal leading-snug text-muted-foreground/60"
+                title={`${props.model.maxContextWindowTokens?.toLocaleString()} token context window`}
+              >
+                {contextWindowLabel} ctx
+              </span>
+            ) : null}
+            {billingLabel ? (
+              <span
+                className="shrink-0 text-[10px] font-normal leading-snug text-muted-foreground/60"
+                title={
+                  props.model.billingMultiplier === 0
+                    ? "Included in your plan — does not consume premium requests"
+                    : `Costs ${props.model.billingMultiplier} premium requests per turn`
+                }
+              >
+                {billingLabel}
+              </span>
+            ) : null}
           </div>
         )}
       </div>
