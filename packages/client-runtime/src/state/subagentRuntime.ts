@@ -131,7 +131,7 @@ export function isBackgroundTaskActivity(payload: Record<string, unknown>): bool
     (typeof payload.description === "string" && payload.description) ||
     (typeof payload.summary === "string" && payload.summary) ||
     "";
-  if (label.startsWith("Invoked skill ")) {
+  if (payload.taskType === undefined && label.startsWith("Invoked skill ")) {
     return true;
   }
   return payload.agentKind !== "agent";
