@@ -23,7 +23,6 @@ import {
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useAtomValue } from "@effect/atom-react";
-import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -214,10 +213,6 @@ const SIDEBAR_THREAD_SORT_LABELS: Record<SidebarThreadSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
 };
-const SIDEBAR_LIST_ANIMATION_OPTIONS = {
-  duration: 180,
-  easing: "ease-out",
-} as const;
 const EMPTY_THREAD_JUMP_LABELS = new Map<string, string>();
 const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -3239,22 +3234,12 @@ export default function Sidebar() {
     dragInProgressRef.current = false;
   }, []);
 
-  const animatedProjectListsRef = useRef(new WeakSet<HTMLElement>());
   const attachProjectListAutoAnimateRef = useCallback((node: HTMLElement | null) => {
-    if (!node || animatedProjectListsRef.current.has(node)) {
-      return;
-    }
-    autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
-    animatedProjectListsRef.current.add(node);
+    void node;
   }, []);
 
-  const animatedThreadListsRef = useRef(new WeakSet<HTMLElement>());
   const attachThreadListAutoAnimateRef = useCallback((node: HTMLElement | null) => {
-    if (!node || animatedThreadListsRef.current.has(node)) {
-      return;
-    }
-    autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
-    animatedThreadListsRef.current.add(node);
+    void node;
   }, []);
 
   const visibleThreads = useMemo(

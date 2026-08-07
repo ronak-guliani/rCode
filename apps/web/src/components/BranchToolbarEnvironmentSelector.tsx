@@ -56,7 +56,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         )}
         <span
           data-composer-label
-          className="min-w-0 max-w-[240px] truncate transition-[max-width,opacity] duration-300 ease-out group-data-[compact]/composer-context:max-w-0 group-data-[compact]/composer-context:opacity-0"
+          className="min-w-0 max-w-[240px] truncate transition-[max-width,opacity] duration-120 ease-out group-data-[compact]/composer-context:max-w-0 group-data-[compact]/composer-context:opacity-0"
         >
           {activeEnvironment?.label ?? "Run on"}
         </span>
@@ -84,7 +84,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         )}
         <span
           data-composer-label
-          className="min-w-0 max-w-[240px] truncate transition-[max-width,opacity] duration-300 ease-out group-data-[compact]/composer-context:max-w-0 group-data-[compact]/composer-context:opacity-0"
+          className="min-w-0 max-w-[240px] truncate transition-[max-width,opacity] duration-120 ease-out group-data-[compact]/composer-context:max-w-0 group-data-[compact]/composer-context:opacity-0"
         >
           <SelectValue />
         </span>

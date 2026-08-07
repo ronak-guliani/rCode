@@ -74,7 +74,7 @@ function SettingsContentLayout() {
         {!isElectron && (
           <header
             className={cn(
-              "workspace-topbar px-3 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none sm:px-5",
+              "workspace-topbar px-3 transition-[padding-left] duration-100 ease-linear motion-reduce:transition-none sm:px-5",
               COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             )}
           >
@@ -92,7 +92,7 @@ function SettingsContentLayout() {
         {isElectron && (
           <div
             className={cn(
-              "drag-region flex h-[52px] shrink-0 items-center px-5 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
+              "drag-region flex h-[52px] shrink-0 items-center px-5 transition-[padding-left] duration-100 ease-linear motion-reduce:transition-none wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
               COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             )}
           >
