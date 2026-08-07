@@ -33,8 +33,17 @@ import {
 } from "./TextGenerationUtils.ts";
 
 const COPILOT_TIMEOUT_MS = 180_000;
+const COPILOT_EFFECT_TIMEOUT_MS = COPILOT_TIMEOUT_MS + 10_000;
 
 const isTextGenerationError = Schema.is(TextGenerationError);
+
+type CopilotTextGenerationClient = Pick<CopilotClient, "start" | "createSession" | "stop">;
+
+export interface CopilotTextGenerationOptions {
+  readonly clientFactory?: (
+    clientOptions: ConstructorParameters<typeof CopilotClient>[0],
+  ) => CopilotTextGenerationClient;
+}
 
 type TextGenerationOperation =
   | "generateCommitMessage"
@@ -44,6 +53,8 @@ type TextGenerationOperation =
 
 export function makeCopilotTextGeneration(
   copilotSettings: CopilotSettings,
+  environment?: NodeJS.ProcessEnv,
+  options?: CopilotTextGenerationOptions,
 ): TextGeneration.TextGeneration["Service"] {
   /**
    * Run one prompt to completion and return the assistant's raw text.
@@ -59,68 +70,89 @@ export function makeCopilotTextGeneration(
     readonly prompt: string;
     readonly model: string | undefined;
   }): Effect.Effect<string, TextGenerationError> =>
-    Effect.flatMap(makeCopilotClientOptions(copilotSettings, { cwd: input.cwd }), (clientOptions) =>
-      Effect.tryPromise({
-        try: async () => {
-          const client = new CopilotClient(clientOptions);
-          let streamed = "";
-          let finalMessage: string | undefined;
+    Effect.flatMap(
+      makeCopilotClientOptions(copilotSettings, { cwd: input.cwd, environment }),
+      (clientOptions) =>
+        Effect.try({
+          try: () => options?.clientFactory?.(clientOptions) ?? new CopilotClient(clientOptions),
+          catch: (cause) =>
+            new TextGenerationError({
+              operation: input.operation,
+              detail: "Failed to initialize GitHub Copilot text generation.",
+              cause,
+            }),
+        }).pipe(
+          Effect.flatMap((client) => {
+            let streamed = "";
+            let finalMessage: string | undefined;
+            let session:
+              | Awaited<ReturnType<CopilotTextGenerationClient["createSession"]>>
+              | undefined;
+            let unsubscribe: () => void = () => undefined;
 
-          try {
-            await client.start();
-            const session = await client.createSession({
-              ...(input.model ? { model: input.model } : {}),
-              ...(copilotSettings.homePath.trim()
-                ? { configDir: copilotSettings.homePath.trim() }
-                : {}),
-              workingDirectory: input.cwd,
-              streaming: true,
-              onPermissionRequest: async () => ({ kind: "denied-interactively-by-user" }) as const,
-            });
+            return Effect.tryPromise({
+              try: async () => {
+                await client.start();
+                session = await client.createSession({
+                  ...(input.model ? { model: input.model } : {}),
+                  ...(clientOptions.baseDirectory
+                    ? { configDirectory: clientOptions.baseDirectory }
+                    : {}),
+                  workingDirectory: input.cwd,
+                  streaming: true,
+                  onPermissionRequest: async () =>
+                    ({ kind: "denied-interactively-by-user" }) as const,
+                });
 
-            const unsubscribe = session.on((event) => {
-              if (event.type === "assistant.message_delta") {
-                streamed += event.data.deltaContent;
-                return;
-              }
-              if (event.type === "assistant.message") {
-                finalMessage = event.data.content;
-              }
-            });
+                unsubscribe = session.on((event) => {
+                  if (event.type === "assistant.message_delta") {
+                    streamed += event.data.deltaContent;
+                    return;
+                  }
+                  if (event.type === "assistant.message") {
+                    finalMessage = event.data.content;
+                  }
+                });
 
-            try {
-              await session.send({ prompt: input.prompt, mode: "immediate" });
-            } finally {
-              unsubscribe();
-              await session.disconnect().catch(() => undefined);
-            }
-          } finally {
-            await client.stop().catch(() => []);
-          }
-
-          return (finalMessage ?? streamed).trim();
-        },
-        catch: (cause) =>
-          new TextGenerationError({
-            operation: input.operation,
-            detail: "GitHub Copilot text generation request failed.",
-            cause,
-          }),
-      }).pipe(
-        Effect.timeoutOption(COPILOT_TIMEOUT_MS),
-        Effect.flatMap(
-          Option.match({
-            onNone: () =>
-              Effect.fail(
+                const message = await session.sendAndWait(
+                  { prompt: input.prompt, mode: "immediate" },
+                  COPILOT_TIMEOUT_MS,
+                );
+                if (message?.data.content) {
+                  finalMessage = message.data.content;
+                }
+                return (finalMessage ?? streamed).trim();
+              },
+              catch: (cause) =>
                 new TextGenerationError({
                   operation: input.operation,
-                  detail: "GitHub Copilot text generation request timed out.",
+                  detail: "GitHub Copilot text generation request failed.",
+                  cause,
+                }),
+            }).pipe(
+              Effect.ensuring(
+                Effect.promise(async () => {
+                  unsubscribe();
+                  await session?.disconnect().catch(() => undefined);
+                  await client.stop().catch(() => []);
                 }),
               ),
-            onSome: (value: string) => Effect.succeed(value),
+            );
           }),
+          Effect.timeoutOption(COPILOT_EFFECT_TIMEOUT_MS),
+          Effect.flatMap(
+            Option.match({
+              onNone: () =>
+                Effect.fail(
+                  new TextGenerationError({
+                    operation: input.operation,
+                    detail: "GitHub Copilot text generation request timed out.",
+                  }),
+                ),
+              onSome: (value: string) => Effect.succeed(value),
+            }),
+          ),
         ),
-      ),
     );
 
   const runCopilotJson = <S extends Schema.Top>({

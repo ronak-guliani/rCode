@@ -34,6 +34,7 @@ import {
   type ProviderDriver,
   type ProviderInstance,
 } from "../ProviderDriver.ts";
+import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
@@ -89,7 +90,7 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
   },
   configSchema: CopilotSettings,
   defaultConfig: (): CopilotSettings => decodeCopilotSettings({}),
-  create: ({ instanceId, displayName, accentColor, enabled, config }) =>
+  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
@@ -105,16 +106,18 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies CopilotSettings;
+      const processEnv = mergeProviderInstanceEnvironment(environment);
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
-        env: process.env,
+        env: processEnv,
       });
 
       const adapter = yield* makeCopilotAdapter(effectiveConfig, {
         instanceId,
+        environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
-      const textGeneration = makeCopilotTextGeneration(effectiveConfig);
+      const textGeneration = makeCopilotTextGeneration(effectiveConfig, processEnv);
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<CopilotSettings>>({
@@ -124,7 +127,9 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
           buildInitialCopilotProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
-        checkProvider: checkCopilotProviderStatus(effectiveConfig).pipe(Effect.map(stampIdentity)),
+        checkProvider: checkCopilotProviderStatus(effectiveConfig, processEnv).pipe(
+          Effect.map(stampIdentity),
+        ),
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
           enrichCopilotSnapshot({
             snapshot: currentSnapshot,

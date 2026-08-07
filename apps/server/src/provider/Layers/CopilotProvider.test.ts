@@ -10,7 +10,10 @@ import {
   copilotAuthStatusFromMessage,
   copilotModelFromInfo,
   copilotModelsFromInfos,
+  makeCopilotClientOptions,
+  resolveRuntimeModels,
 } from "./CopilotProvider.ts";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 const decodeCopilotSettings = Schema.decodeSync(CopilotSettings);
 
@@ -22,6 +25,30 @@ const modelInfo = (overrides: Partial<ModelInfo> & Pick<ModelInfo, "id" | "name"
     },
     ...overrides,
   }) as ModelInfo;
+
+describe("makeCopilotClientOptions", () => {
+  it.effect("maps settings and instance environment to SDK 1.x options", () =>
+    Effect.gen(function* () {
+      const options = yield* makeCopilotClientOptions(
+        decodeCopilotSettings({ binaryPath: "/opt/copilot", homePath: "/tmp/copilot-home" }),
+        { cwd: "/tmp/worktree", environment: { GH_TOKEN: "instance-token" } },
+      );
+
+      expect(options.workingDirectory).toBe("/tmp/worktree");
+      expect(options.baseDirectory).toBe("/tmp/copilot-home");
+      expect(options.connection).toMatchObject({
+        kind: "stdio",
+        path: "/opt/copilot",
+        env: { GH_TOKEN: "instance-token" },
+      });
+      expect(options).not.toHaveProperty("cliPath");
+      expect(options).not.toHaveProperty("cwd");
+    }).pipe(
+      Effect.provideService(HostProcessPlatform, "darwin"),
+      Effect.provideService(HostProcessArchitecture, "arm64"),
+    ),
+  );
+});
 
 describe("buildInitialCopilotProviderSnapshot", () => {
   it.effect("returns a disabled snapshot when settings.enabled is false", () =>
@@ -172,6 +199,21 @@ describe("copilotModelsFromInfos", () => {
       modelInfo({ id: "pending", name: "Pending", policy: { state: "unconfigured", terms: "" } }),
     ]);
     expect(models.map((model) => model.slug)).toEqual(["pending"]);
+  });
+
+  it("does not restore fallback models when the live catalog is policy-disabled", () => {
+    const models = resolveRuntimeModels(
+      [
+        modelInfo({
+          id: "blocked",
+          name: "Blocked",
+          policy: { state: "disabled", terms: "" },
+        }),
+      ],
+      decodeCopilotSettings({ customModels: ["private-preview"] }),
+    );
+
+    expect(models.map((model) => model.slug)).toEqual(["private-preview"]);
   });
 });
 

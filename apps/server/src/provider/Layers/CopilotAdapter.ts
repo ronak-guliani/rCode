@@ -48,11 +48,13 @@ import * as NodeCrypto from "node:crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -62,7 +64,7 @@ import {
 import { type CopilotAdapterShape } from "../Services/CopilotAdapter.ts";
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { makeCopilotClientOptions } from "./CopilotProvider.ts";
-import { loadCopilotMcpServers } from "./copilotMcpServers.ts";
+import { loadCopilotMcpServers, resolveCopilotConfigDirectory } from "./copilotMcpServers.ts";
 import {
   assistantUsageFields,
   beginCopilotTurn,
@@ -88,6 +90,7 @@ type CopilotReasoningEffort = "low" | "medium" | "high" | "xhigh";
 
 export interface CopilotAdapterOptions {
   readonly instanceId?: ProviderInstanceId;
+  readonly environment?: NodeJS.ProcessEnv;
   readonly nativeEventLogger?: EventNdjsonLogger;
   /** Test seam: substitute a fake Copilot client. */
   readonly clientFactory?: (options: CopilotClientOptions) => CopilotClientHandle;
@@ -376,6 +379,7 @@ export function makeCopilotAdapter(
     const nativeEventLogger = options?.nativeEventLogger;
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
     const sessions = new Map<ThreadId, ActiveCopilotSession>();
+    const threadLocks = new Map<ThreadId, Semaphore.Semaphore>();
     // The SDK calls us back on plain promises, outside any fiber. Capturing
     // the context lets those callbacks run Effects (queue offers, logging)
     // without re-entering the runtime from scratch each time.
@@ -391,6 +395,14 @@ export function makeCopilotAdapter(
 
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
       PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
+
+    const withThreadLock = <A, E, R>(threadId: ThreadId, effect: Effect.Effect<A, E, R>) => {
+      const existing = threadLocks.get(threadId);
+      if (existing) return existing.withPermit(effect);
+      const semaphore = Semaphore.makeUnsafe(1);
+      threadLocks.set(threadId, semaphore);
+      return semaphore.withPermit(effect);
+    };
 
     const writeNativeEvent = (threadId: ThreadId, event: SessionEvent) => {
       if (!nativeEventLogger) return Promise.resolve();
@@ -1151,8 +1163,22 @@ export function makeCopilotAdapter(
       return Effect.succeed(record);
     };
 
+    const resolvePendingInteractions = (record: ActiveCopilotSession) => {
+      for (const pending of record.pendingApprovalResolvers.values()) {
+        pending.resolve({ kind: "denied-interactively-by-user" });
+      }
+      for (const pending of record.pendingUserInputResolvers.values()) {
+        pending.resolve({ answer: "", wasFreeform: true });
+      }
+      record.pendingApprovalResolvers.clear();
+      record.pendingUserInputResolvers.clear();
+    };
+
     const stopRecord = async (record: ActiveCopilotSession) => {
       record.unsubscribe();
+      // Never leave the SDK awaiting a promise we will no longer resolve —
+      // that would wedge the child process on shutdown.
+      resolvePendingInteractions(record);
       try {
         await record.session.disconnect();
       } catch {
@@ -1163,16 +1189,6 @@ export function makeCopilotAdapter(
       } catch {
         // Best effort.
       }
-      // Never leave the SDK awaiting a promise we will no longer resolve —
-      // that would wedge the child process on shutdown.
-      for (const pending of record.pendingApprovalResolvers.values()) {
-        pending.resolve({ kind: "denied-interactively-by-user" });
-      }
-      for (const pending of record.pendingUserInputResolvers.values()) {
-        pending.resolve({ answer: "", wasFreeform: true });
-      }
-      record.pendingApprovalResolvers.clear();
-      record.pendingUserInputResolvers.clear();
       sessions.delete(record.threadId);
     };
 
@@ -1194,7 +1210,7 @@ export function makeCopilotAdapter(
       ...(record.lastError ? { lastError: record.lastError } : {}),
     });
 
-    const startSession: CopilotAdapterShape["startSession"] = (input) =>
+    const startSessionUnlocked: CopilotAdapterShape["startSession"] = (input) =>
       Effect.gen(function* () {
         if (input.provider !== undefined && input.provider !== PROVIDER) {
           return yield* new ProviderAdapterValidationError({
@@ -1216,8 +1232,11 @@ export function makeCopilotAdapter(
           reasoningEffort: copilotReasoningEffortFromSelection(requestedModelSelection),
         };
 
-        const configDir = trimToUndefined(copilotSettings.homePath);
-        const mcpServers = yield* Effect.tryPromise({
+        const configuredHomePath = trimToUndefined(copilotSettings.homePath);
+        const configDir = configuredHomePath
+          ? resolveCopilotConfigDirectory(configuredHomePath)
+          : undefined;
+        const configuredMcpServers = yield* Effect.tryPromise({
           try: () => loadCopilotMcpServers(configDir),
           catch: (cause) =>
             new ProviderAdapterProcessError({
@@ -1227,17 +1246,30 @@ export function makeCopilotAdapter(
               cause,
             }),
         });
+        const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+        const mcpServers: Record<string, MCPServerConfig> | undefined = mcpSession
+          ? {
+              ...configuredMcpServers,
+              "t3-code": {
+                type: "http",
+                url: mcpSession.endpoint,
+                headers: { Authorization: mcpSession.authorizationHeader },
+                tools: ["*"],
+              },
+            }
+          : configuredMcpServers;
         const resumeSessionId = extractResumeSessionId(input.resumeCursor);
-        const clientOptions = yield* makeCopilotClientOptions(
-          copilotSettings,
-          input.cwd ? { cwd: input.cwd } : {},
-        );
+        const clientOptions = yield* makeCopilotClientOptions(copilotSettings, {
+          ...(input.cwd ? { cwd: input.cwd } : {}),
+          ...(options?.environment ? { environment: options.environment } : {}),
+        });
         const client = options?.clientFactory?.(clientOptions) ?? new CopilotClient(clientOptions);
         const pendingApprovalResolvers = new Map<string, PendingApprovalRequest>();
         const pendingUserInputResolvers = new Map<string, PendingUserInputRequest>();
         // Handlers can fire before `createSession` resolves, so they read the
         // record through a mutable binding rather than capturing it.
         let sessionRecord: ActiveCopilotSession | undefined;
+        const pendingSessionEvents: SessionEvent[] = [];
         const handlers = createInteractionHandlers(
           input.threadId,
           () => sessionRecord?.currentTurnId,
@@ -1246,37 +1278,46 @@ export function makeCopilotAdapter(
           pendingUserInputResolvers,
         );
 
-        yield* validateSessionConfiguration({
-          client,
-          threadId: input.threadId,
-          ...sessionConfiguration,
-        });
+        const session = yield* Effect.gen(function* () {
+          yield* validateSessionConfiguration({
+            client,
+            threadId: input.threadId,
+            ...sessionConfiguration,
+          });
 
-        const session = yield* Effect.tryPromise({
-          try: async () => {
-            const config = {
-              ...handlers,
-              ...(sessionConfiguration.model ? { model: sessionConfiguration.model } : {}),
-              ...(sessionConfiguration.reasoningEffort
-                ? { reasoningEffort: sessionConfiguration.reasoningEffort }
-                : {}),
-              ...(input.cwd ? { workingDirectory: input.cwd } : {}),
-              ...(configDir ? { configDir } : {}),
-              ...(mcpServers ? { mcpServers } : {}),
-              streaming: true,
-            };
-            return resumeSessionId
-              ? client.resumeSession(resumeSessionId, config)
-              : client.createSession(config);
-          },
-          catch: (cause) =>
-            new ProviderAdapterProcessError({
-              provider: PROVIDER,
-              threadId: input.threadId,
-              detail: toMessage(cause, "Failed to start GitHub Copilot session."),
-              cause,
-            }),
-        });
+          return yield* Effect.tryPromise({
+            try: async () => {
+              const config = {
+                ...handlers,
+                ...(sessionConfiguration.model ? { model: sessionConfiguration.model } : {}),
+                ...(sessionConfiguration.reasoningEffort
+                  ? { reasoningEffort: sessionConfiguration.reasoningEffort }
+                  : {}),
+                ...(input.cwd ? { workingDirectory: input.cwd } : {}),
+                ...(configDir ? { configDirectory: configDir } : {}),
+                ...(mcpServers ? { mcpServers } : {}),
+                streaming: true,
+                onEvent: (event: SessionEvent) => {
+                  if (sessionRecord) {
+                    handleSessionEvent(sessionRecord, event);
+                  } else {
+                    pendingSessionEvents.push(event);
+                  }
+                },
+              };
+              return resumeSessionId
+                ? client.resumeSession(resumeSessionId, config)
+                : client.createSession(config);
+            },
+            catch: (cause) =>
+              new ProviderAdapterProcessError({
+                provider: PROVIDER,
+                threadId: input.threadId,
+                detail: toMessage(cause, "Failed to start GitHub Copilot session."),
+                cause,
+              }),
+          });
+        }).pipe(Effect.onError(() => Effect.promise(() => client.stop().catch(() => []))));
 
         const startedAt = nowIso();
         const record: ActiveCopilotSession = {
@@ -1304,10 +1345,10 @@ export function makeCopilotAdapter(
           pendingUserInputResolvers,
           unsubscribe: () => undefined,
         };
-        record.unsubscribe = session.on((event) => {
-          handleSessionEvent(record, event);
-        });
         sessionRecord = record;
+        for (const event of pendingSessionEvents) {
+          handleSessionEvent(record, event);
+        }
         sessions.set(input.threadId, record);
 
         yield* Effect.forEach(
@@ -1344,7 +1385,10 @@ export function makeCopilotAdapter(
         return toProviderSession(record, "ready");
       });
 
-    const sendTurn: CopilotAdapterShape["sendTurn"] = (input) =>
+    const startSession: CopilotAdapterShape["startSession"] = (input) =>
+      withThreadLock(input.threadId, startSessionUnlocked(input));
+
+    const sendTurnUnlocked: CopilotAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
         const record = yield* getSessionRecord(input.threadId);
         const requestedModelSelection =
@@ -1442,20 +1486,27 @@ export function makeCopilotAdapter(
         } satisfies ProviderTurnStartResult;
       });
 
+    const sendTurn: CopilotAdapterShape["sendTurn"] = (input) =>
+      withThreadLock(input.threadId, sendTurnUnlocked(input));
+
     const interruptTurn: CopilotAdapterShape["interruptTurn"] = (threadId) =>
-      Effect.gen(function* () {
-        const record = yield* getSessionRecord(threadId);
-        yield* Effect.tryPromise({
-          try: () => record.session.abort(),
-          catch: (cause) =>
-            new ProviderAdapterRequestError({
-              provider: PROVIDER,
-              method: "session.abort",
-              detail: toMessage(cause, "Failed to interrupt GitHub Copilot turn."),
-              cause,
-            }),
-        });
-      });
+      withThreadLock(
+        threadId,
+        Effect.gen(function* () {
+          const record = yield* getSessionRecord(threadId);
+          resolvePendingInteractions(record);
+          yield* Effect.tryPromise({
+            try: () => record.session.abort(),
+            catch: (cause) =>
+              new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method: "session.abort",
+                detail: toMessage(cause, "Failed to interrupt GitHub Copilot turn."),
+                cause,
+              }),
+          });
+        }),
+      );
 
     const respondToRequest: CopilotAdapterShape["respondToRequest"] = (
       threadId,
@@ -1513,19 +1564,22 @@ export function makeCopilotAdapter(
       });
 
     const stopSession: CopilotAdapterShape["stopSession"] = (threadId) =>
-      Effect.gen(function* () {
-        const record = yield* getSessionRecord(threadId);
-        yield* Effect.tryPromise({
-          try: () => stopRecord(record),
-          catch: (cause) =>
-            new ProviderAdapterProcessError({
-              provider: PROVIDER,
-              threadId,
-              detail: toMessage(cause, "Failed to stop GitHub Copilot session."),
-              cause,
-            }),
-        });
-      });
+      withThreadLock(
+        threadId,
+        Effect.gen(function* () {
+          const record = yield* getSessionRecord(threadId);
+          yield* Effect.tryPromise({
+            try: () => stopRecord(record),
+            catch: (cause) =>
+              new ProviderAdapterProcessError({
+                provider: PROVIDER,
+                threadId,
+                detail: toMessage(cause, "Failed to stop GitHub Copilot session."),
+                cause,
+              }),
+          });
+        }),
+      );
 
     const listSessions: CopilotAdapterShape["listSessions"] = () =>
       Effect.sync(() =>
@@ -1575,6 +1629,15 @@ export function makeCopilotAdapter(
             cause,
           }),
       });
+
+    yield* Effect.addFinalizer(() =>
+      stopAll().pipe(
+        Effect.catch((cause) =>
+          Effect.logError("Failed to stop GitHub Copilot sessions during shutdown.", { cause }),
+        ),
+        Effect.andThen(PubSub.shutdown(runtimeEventPubSub)),
+      ),
+    );
 
     return {
       provider: PROVIDER,

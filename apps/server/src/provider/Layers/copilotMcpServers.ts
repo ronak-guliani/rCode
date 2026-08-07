@@ -33,12 +33,16 @@ function asNonEmptyString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function asNonBlankValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
 function asStringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
   }
   return value.flatMap((item) => {
-    const normalized = asNonEmptyString(item);
+    const normalized = asNonBlankValue(item);
     return normalized ? [normalized] : [];
   });
 }
@@ -50,7 +54,7 @@ function asStringRecord(value: unknown): Record<string, string> | undefined {
   }
 
   const entries = Object.entries(record).flatMap(([key, item]) => {
-    const normalized = asNonEmptyString(item);
+    const normalized = asNonBlankValue(item);
     return normalized ? [[key, normalized] as const] : [];
   });
 
@@ -89,7 +93,7 @@ function toMcpServerConfig(entry: unknown): MCPServerConfig | undefined {
       args,
       tools,
       ...(env ? { env } : {}),
-      ...(cwd ? { cwd } : {}),
+      ...(cwd ? { workingDirectory: cwd } : {}),
       ...(timeout !== undefined ? { timeout } : {}),
     };
   }
@@ -118,9 +122,20 @@ export function copilotConfigDirCandidates(
 ): ReadonlyArray<string> {
   const explicit = asNonEmptyString(configDir);
   if (explicit) {
-    return [explicit];
+    return [resolveCopilotConfigDirectory(explicit, homedir)];
   }
   return [NodePath.join(homedir, ".config", "copilot"), NodePath.join(homedir, ".copilot")];
+}
+
+export function resolveCopilotConfigDirectory(
+  configDir: string,
+  homedir: string = NodeOS.homedir(),
+): string {
+  return configDir === "~"
+    ? homedir
+    : configDir.startsWith("~/")
+      ? NodePath.join(homedir, configDir.slice(2))
+      : configDir;
 }
 
 export async function loadCopilotMcpServers(
