@@ -79,7 +79,6 @@ export function clearTurnTracking(state: CopilotTurnTrackingState): void {
 export function assistantUsageFields(usage: CopilotAssistantUsage | undefined): {
   usage?: CopilotAssistantUsage;
   modelUsage?: { model: string };
-  totalCostUsd?: number;
 } {
   if (!usage) {
     return {};
@@ -87,7 +86,6 @@ export function assistantUsageFields(usage: CopilotAssistantUsage | undefined): 
 
   return {
     usage,
-    ...(usage.cost !== undefined ? { totalCostUsd: usage.cost } : {}),
     ...(usage.model ? { modelUsage: { model: usage.model } } : {}),
   };
 }
