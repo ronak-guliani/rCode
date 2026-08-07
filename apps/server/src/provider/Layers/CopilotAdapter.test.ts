@@ -230,12 +230,43 @@ describe("CopilotAdapter lifecycle", () => {
         yield* adapter.interruptTurn(threadId);
 
         expect(yield* Effect.promise(() => approval)).toEqual({
-          kind: "denied-interactively-by-user",
+          kind: "reject",
         });
         expect(yield* Effect.promise(() => userInput)).toEqual({
           answer: "",
           wasFreeform: true,
         });
+      }),
+    ).pipe(Effect.provide(testLayer));
+  });
+
+  it.effect("approves permission requests immediately in full-access mode", () => {
+    const threadId = ThreadId.make("full-access-approval");
+    let capturedConfig: SessionConfig | undefined;
+    const client = makeClient({
+      createSession: async (config) => {
+        capturedConfig = config;
+        return makeSession();
+      },
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const adapter = yield* makeCopilotAdapter(decodeCopilotSettings({}), {
+          clientFactory: () => client,
+        });
+        yield* adapter.startSession(startInput(threadId));
+
+        expect(
+          yield* Effect.promise(() =>
+            Promise.resolve(
+              capturedConfig?.onPermissionRequest?.(
+                { kind: "shell", command: "echo allowed" } as unknown as PermissionRequest,
+                { sessionId: "copilot-session" },
+              ),
+            ),
+          ),
+        ).toEqual({ kind: "approve-once" });
       }),
     ).pipe(Effect.provide(testLayer));
   });
@@ -339,7 +370,7 @@ describe("CopilotAdapter lifecycle", () => {
         );
 
         expect(yield* Effect.promise(() => Promise.resolve(firstApproval))).toEqual({
-          kind: "approved",
+          kind: "approve-once",
         });
         expect(
           yield* Effect.promise(() =>
@@ -347,7 +378,7 @@ describe("CopilotAdapter lifecycle", () => {
               capturedConfig?.onPermissionRequest?.(request, { sessionId: "copilot-session" }),
             ),
           ),
-        ).toEqual({ kind: "approved" });
+        ).toEqual({ kind: "approve-once" });
       }),
     ).pipe(Effect.provide(testLayer));
   });
