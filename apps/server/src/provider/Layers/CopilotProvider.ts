@@ -28,7 +28,12 @@ import {
   type ServerProviderState,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { CopilotClient, type CopilotClientOptions, type ModelInfo } from "@github/copilot-sdk";
+import {
+  CopilotClient,
+  type CopilotClientOptions,
+  type ModelInfo,
+  RuntimeConnection,
+} from "@github/copilot-sdk";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -49,6 +54,7 @@ import {
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
 import { normalizeCopilotCliPathOverride, resolveBundledCopilotCliPath } from "./copilotCliPath.ts";
+import { resolveCopilotConfigDirectory } from "./copilotMcpServers.ts";
 
 const COPILOT_PRESENTATION = {
   displayName: "GitHub Copilot",
@@ -232,20 +238,41 @@ function toPositiveInt(value: number | undefined): number | undefined {
   return normalized > 0 ? normalized : undefined;
 }
 
+function definedEnvironment(environment: NodeJS.ProcessEnv): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(environment).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
+}
+
 export const makeCopilotClientOptions = Effect.fn("makeCopilotClientOptions")(function* (
   settings: CopilotSettings,
-  overrides?: { readonly cwd?: string | undefined },
+  overrides?: {
+    readonly cwd?: string | undefined;
+    readonly environment?: NodeJS.ProcessEnv | undefined;
+  },
 ): Effect.fn.Return<CopilotClientOptions, never, never> {
   const platform = yield* HostProcessPlatform;
   const arch = yield* HostProcessArchitecture;
   const cliPath =
     normalizeCopilotCliPathOverride(settings.binaryPath) ??
     resolveBundledCopilotCliPath({ platform, arch });
+  const connection =
+    cliPath || overrides?.environment
+      ? RuntimeConnection.forStdio({
+          ...(cliPath ? { path: cliPath } : {}),
+          ...(overrides?.environment ? { env: definedEnvironment(overrides.environment) } : {}),
+        })
+      : undefined;
   return {
-    ...(cliPath ? { cliPath } : {}),
-    ...(overrides?.cwd ? { cwd: overrides.cwd } : {}),
+    ...(connection ? { connection } : {}),
+    ...(overrides?.cwd ? { workingDirectory: overrides.cwd } : {}),
+    ...(settings.homePath.trim()
+      ? { baseDirectory: resolveCopilotConfigDirectory(settings.homePath.trim()) }
+      : {}),
     logLevel: "error",
-  };
+  } satisfies CopilotClientOptions;
 });
 
 /** Translate one live `ModelInfo` into a picker entry. */
@@ -295,16 +322,12 @@ function fallbackModels(settings: CopilotSettings): ReadonlyArray<ServerProvider
   );
 }
 
-function resolveRuntimeModels(
+export function resolveRuntimeModels(
   models: ReadonlyArray<ModelInfo>,
   settings: CopilotSettings,
 ): ReadonlyArray<ServerProviderModel> {
   const runtimeModels = copilotModelsFromInfos(models);
-  return providerModelsFromSettings(
-    runtimeModels.length > 0 ? runtimeModels : COPILOT_BUILT_IN_MODELS,
-    settings.customModels ?? [],
-    EMPTY_CAPABILITIES,
-  );
+  return providerModelsFromSettings(runtimeModels, settings.customModels ?? [], EMPTY_CAPABILITIES);
 }
 
 /**
@@ -388,6 +411,7 @@ export function buildInitialCopilotProviderSnapshot(
 
 export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus")(function* (
   settings: CopilotSettings,
+  environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<ServerProviderDraft, never, never> {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
 
@@ -407,7 +431,9 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
     });
   }
 
-  const client = new CopilotClient(yield* makeCopilotClientOptions(settings));
+  const client = new CopilotClient(
+    yield* makeCopilotClientOptions(settings, environment ? { environment } : undefined),
+  );
   const probe = yield* Effect.tryPromise({
     try: async () => {
       await client.start();
