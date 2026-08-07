@@ -8,6 +8,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import type {
+  ModelInfo,
   PermissionRequest,
   ResumeSessionConfig,
   SessionConfig,
@@ -58,6 +59,7 @@ function makeSession(input?: {
 }
 
 function makeClient(input: {
+  readonly listModels?: () => Promise<ModelInfo[]>;
   readonly createSession?: (config: SessionConfig) => Promise<CopilotSessionHandle>;
   readonly resumeSession?: (
     sessionId: string,
@@ -67,7 +69,7 @@ function makeClient(input: {
 }): CopilotClientHandle {
   return {
     start: async () => undefined,
-    listModels: async () => [],
+    listModels: input.listModels ?? (async () => []),
     createSession: input.createSession ?? (async () => makeSession()),
     resumeSession: input.resumeSession ?? (async () => makeSession()),
     stop: async () => {
@@ -362,6 +364,65 @@ describe("CopilotAdapter lifecycle", () => {
 
         const existing = yield* adapter.startSession(startInput(threadId));
         expect(existing.status).toBe("running");
+      }),
+    ).pipe(Effect.provide(testLayer));
+  });
+
+  it.effect("allows an explicitly configured custom model outside the live catalog", () => {
+    const threadId = ThreadId.make("custom-model");
+    let capturedConfig: SessionConfig | undefined;
+    const client = makeClient({
+      listModels: async () => [],
+      createSession: async (config) => {
+        capturedConfig = config;
+        return makeSession();
+      },
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const adapter = yield* makeCopilotAdapter(
+          decodeCopilotSettings({ customModels: ["private-preview"] }),
+          { clientFactory: () => client },
+        );
+        yield* adapter.startSession({
+          ...startInput(threadId),
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("copilot"),
+            model: "private-preview",
+          },
+        });
+
+        expect(capturedConfig?.model).toBe("private-preview");
+      }),
+    ).pipe(Effect.provide(testLayer));
+  });
+
+  it.effect("does not rediscover models when sending with unchanged configuration", () => {
+    const threadId = ThreadId.make("unchanged-model");
+    let listModelsCount = 0;
+    const client = makeClient({
+      listModels: async () => {
+        listModelsCount += 1;
+        return [{ id: "gpt-5-mini", name: "GPT-5 mini" } as ModelInfo];
+      },
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const adapter = yield* makeCopilotAdapter(decodeCopilotSettings({}), {
+          clientFactory: () => client,
+        });
+        yield* adapter.startSession({
+          ...startInput(threadId),
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("copilot"),
+            model: "gpt-5-mini",
+          },
+        });
+        yield* adapter.sendTurn({ threadId, input: "continue", attachments: [] });
+
+        expect(listModelsCount).toBe(1);
       }),
     ).pipe(Effect.provide(testLayer));
   });

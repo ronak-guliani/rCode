@@ -1096,8 +1096,10 @@ export function makeCopilotAdapter(
         });
         const supportedModels = new Map(models.map((model) => [model.id, model]));
         const selectedModel = input.model ? supportedModels.get(input.model) : undefined;
+        const isConfiguredCustomModel =
+          input.model !== undefined && (copilotSettings.customModels ?? []).includes(input.model);
 
-        if (input.model && !selectedModel) {
+        if (input.model && !selectedModel && !isConfiguredCustomModel) {
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
             operation: "session.model",
@@ -1458,14 +1460,13 @@ export function makeCopilotAdapter(
           });
         }
 
-        yield* validateSessionConfiguration({
-          client: record.client,
-          threadId: input.threadId,
-          model: nextModel,
-          reasoningEffort: nextReasoningEffort,
-        });
-
         if (nextModel !== record.model || nextReasoningEffort !== record.reasoningEffort) {
+          yield* validateSessionConfiguration({
+            client: record.client,
+            threadId: input.threadId,
+            model: nextModel,
+            reasoningEffort: nextReasoningEffort,
+          });
           yield* reconfigureSession(record, {
             model: nextModel,
             reasoningEffort: nextReasoningEffort,
