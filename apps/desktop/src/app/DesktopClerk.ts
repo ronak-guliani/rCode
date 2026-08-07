@@ -72,12 +72,12 @@ export const desktopClerkFrontendApiHostname = resolveDesktopClerkFrontendApiHos
     : __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__,
 );
 
-export function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean) {
+export function createDesktopClerkBridge(stateDir: string, desktopScheme: string) {
   return createClerkBridge({
     storage: storage({ path: stateDir }),
     passkeys: true,
     renderer: {
-      scheme: ElectronProtocol.getDesktopScheme(isDevelopment),
+      scheme: desktopScheme,
       host: ElectronProtocol.DESKTOP_HOST,
     },
   });
@@ -98,11 +98,11 @@ export const make = Effect.gen(function* () {
 
   const bridge = yield* Effect.acquireRelease(
     Effect.try({
-      try: () => createDesktopClerkBridge(environment.stateDir, environment.isDevelopment),
+      try: () => createDesktopClerkBridge(environment.stateDir, environment.desktopScheme),
       catch: (cause) =>
         new DesktopClerkBridgeInitializationError({
           stateDir: environment.stateDir,
-          isDevelopment: environment.isDevelopment,
+          isDevelopment: environment.isDevelopment || environment.isRCode,
           cause,
         }),
     }),
@@ -112,7 +112,7 @@ export const make = Effect.gen(function* () {
         catch: (cause) =>
           new DesktopClerkBridgeCleanupError({
             stateDir: environment.stateDir,
-            isDevelopment: environment.isDevelopment,
+            isDevelopment: environment.isDevelopment || environment.isRCode,
             cause,
           }),
       }).pipe(Effect.orDie),

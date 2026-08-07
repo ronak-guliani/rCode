@@ -111,6 +111,26 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
+  it.effect("gives packaged rCode builds isolated identity without enabling live development", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        productName: "rCode",
+        isPackaged: true,
+      });
+
+      assert.equal(environment.isDevelopment, false);
+      assert.equal(environment.isRCode, true);
+      assert.equal(environment.desktopScheme, "rcode");
+      assert.equal(environment.stateDir, "/Users/alice/.t3/rcode");
+      assert.equal(environment.displayName, "rCode");
+      assert.equal(environment.userDataDirName, "rcode");
+      assert.equal(environment.legacyUserDataDirName, "rCode");
+      assert.equal(environment.appUserModelId, "com.ronakguliani.rcode");
+      assert.equal(environment.linuxWmClass, "rcode");
+      assert.deepEqual(environment.devServerUrl, Option.none());
+    }),
+  );
+
   it.effect("uses a configured app user model id override", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(

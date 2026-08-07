@@ -36,10 +36,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = "com.t3tools.t3code";
+const RCODE_APP_ID = "com.ronakguliani.rcode";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
+const DesktopBuildFlavor = Schema.Literals(["alpha", "rcode"]);
 
 const WorkspaceConfig = Schema.Struct({
   catalog: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -136,6 +138,7 @@ interface BuildCliInput {
   readonly platform: Option.Option<typeof BuildPlatform.Type>;
   readonly target: Option.Option<string>;
   readonly arch: Option.Option<typeof BuildArch.Type>;
+  readonly flavor: Option.Option<typeof DesktopBuildFlavor.Type>;
   readonly buildVersion: Option.Option<string>;
   readonly outputDir: Option.Option<string>;
   readonly skipBuild: Option.Option<boolean>;
@@ -597,6 +600,7 @@ interface ResolvedBuildOptions {
   readonly platform: typeof BuildPlatform.Type;
   readonly target: string;
   readonly arch: typeof BuildArch.Type;
+  readonly flavor: typeof DesktopBuildFlavor.Type;
   readonly version: string | undefined;
   readonly outputDir: string;
   readonly skipBuild: boolean;
@@ -610,6 +614,7 @@ interface ResolvedBuildOptions {
 
 interface StagePackageJson {
   readonly name: string;
+  readonly productName: string;
   readonly version: string;
   readonly buildVersion: string;
   readonly t3codeCommitHash: string;
@@ -1027,6 +1032,9 @@ const BuildEnvConfig = Config.all({
   platform: Config.schema(BuildPlatform, "T3CODE_DESKTOP_PLATFORM").pipe(Config.option),
   target: Config.string("T3CODE_DESKTOP_TARGET").pipe(Config.option),
   arch: Config.schema(BuildArch, "T3CODE_DESKTOP_ARCH").pipe(Config.option),
+  flavor: Config.schema(DesktopBuildFlavor, "T3CODE_DESKTOP_FLAVOR").pipe(
+    Config.withDefault("alpha"),
+  ),
   version: Config.string("T3CODE_DESKTOP_VERSION").pipe(Config.option),
   outputDir: Config.string("T3CODE_DESKTOP_OUTPUT_DIR").pipe(Config.option),
   skipBuild: Config.boolean("T3CODE_DESKTOP_SKIP_BUILD").pipe(Config.withDefault(false)),
@@ -1097,6 +1105,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
   const target = mergeOptions(input.target, env.target, PLATFORM_CONFIG[platform].defaultTarget);
   const defaultArch = yield* getDefaultArch(platform);
   const arch = mergeOptions(input.arch, env.arch, defaultArch);
+  const flavor = mergeOptions(input.flavor, Option.some(env.flavor), "alpha");
   const supportedArchitectures = PLATFORM_CONFIG[platform].archChoices;
   if (!supportedArchitectures.includes(arch)) {
     return yield* new UnsupportedDesktopBuildArchitectureError({
@@ -1138,6 +1147,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     platform,
     target,
     arch,
+    flavor,
     version,
     outputDir,
     skipBuild,
@@ -1515,7 +1525,14 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
   return `${trimmed.slice(0, versionSeparator)}/${trimmed.slice(versionSeparator + 1)}`;
 }
 
-export function resolveDesktopProductName(version: string): string {
+export function resolveDesktopProductName(
+  version: string,
+  flavor: typeof DesktopBuildFlavor.Type = "alpha",
+): string {
+  if (flavor === "rcode") {
+    return "rCode";
+  }
+
   return resolveDesktopUpdateChannel(version) === "nightly"
     ? "T3 Code (Nightly)"
     : (desktopPackageJson.productName ?? "T3 Code");
@@ -1534,11 +1551,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         readonly provisioningProfilePath: string;
       }
     | undefined,
+  flavor: typeof DesktopBuildFlavor.Type = "alpha",
 ) {
   const buildConfig: Record<string, unknown> = {
-    appId: DESKTOP_APP_ID,
-    productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    appId: flavor === "rcode" ? RCODE_APP_ID : DESKTOP_APP_ID,
+    productName: resolveDesktopProductName(version, flavor),
+    artifactName:
+      flavor === "rcode" ? "rCode-${version}-${arch}.${ext}" : "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [...DESKTOP_FILE_EXCLUSIONS],
     directories: {
@@ -1570,8 +1589,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       category: "public.app-category.developer-tools",
       protocols: [
         {
-          name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          name: flavor === "rcode" ? "rCode" : "T3 Code",
+          schemes: flavor === "rcode" ? ["rcode"] : ["t3code", "t3code-dev"],
         },
       ],
       ...(macPasskeySigning
@@ -1594,8 +1613,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // t3code:// OAuth callbacks to the app.
       protocols: [
         {
-          name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          name: flavor === "rcode" ? "rCode" : "T3 Code",
+          schemes: flavor === "rcode" ? ["rcode"] : ["t3code", "t3code-dev"],
         },
       ],
       desktop: {
@@ -1913,6 +1932,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   );
   const stagePackageJson: StagePackageJson = {
     name: "t3code",
+    productName: resolveDesktopProductName(appVersion, options.flavor),
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
@@ -1934,6 +1954,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
             provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
           }
         : undefined,
+      options.flavor,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -2060,6 +2081,29 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.makeDirectory(options.outputDir, { recursive: true });
 
   const copiedArtifacts: string[] = [];
+  if (options.platform === "mac" && options.target === "dir") {
+    const unpackedDir = path.join(
+      stageDistDir,
+      options.arch === "x64" ? "mac" : `mac-${options.arch}`,
+    );
+    const appBundleName = `${resolveDesktopProductName(appVersion, options.flavor)}.app`;
+    const from = path.join(unpackedDir, appBundleName);
+    const to = path.join(options.outputDir, appBundleName);
+    if (!(yield* fs.exists(from))) {
+      return yield* new DesktopBuildNoArtifactsProducedError({
+        distPath: unpackedDir,
+        platform: options.platform,
+        arch: options.arch,
+      });
+    }
+    yield* fs.remove(to, { recursive: true, force: true });
+    yield* runCommand(ChildProcess.make("ditto", [from, to]), {
+      label: `ditto ${from} ${to}`,
+      verbose: options.verbose,
+    });
+    copiedArtifacts.push(to);
+  }
+
   for (const entry of stageEntries) {
     const from = path.join(stageDistDir, entry);
     const stat = yield* fs.stat(from).pipe(Effect.orElseSucceed(() => null));
@@ -2096,6 +2140,10 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   ),
   arch: Flag.choice("arch", BuildArch.literals).pipe(
     Flag.withDescription("Build arch, for example arm64/x64/universal (env: T3CODE_DESKTOP_ARCH)."),
+    Flag.optional,
+  ),
+  flavor: Flag.choice("flavor", DesktopBuildFlavor.literals).pipe(
+    Flag.withDescription("Desktop app flavor (env: T3CODE_DESKTOP_FLAVOR)."),
     Flag.optional,
   ),
   buildVersion: Flag.string("build-version").pipe(

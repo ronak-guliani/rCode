@@ -93,6 +93,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it("switches desktop packaging product names to nightly for nightly builds", () => {
     assert.equal(resolveDesktopProductName("0.0.17"), "T3 Code (Alpha)");
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Code (Nightly)");
+    assert.equal(resolveDesktopProductName("0.0.17", "rcode"), "rCode");
   });
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
@@ -345,10 +346,26 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
         undefined,
       );
+      const rcode = yield* createBuildConfig(
+        "mac",
+        "dir",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+        "rcode",
+      );
 
       assert.notProperty(mac, "asarUnpack");
       assert.notProperty(linux, "asarUnpack");
       assert.deepStrictEqual(win.asarUnpack, WINDOWS_ASAR_UNPACK);
+      assert.equal(rcode.appId, "com.ronakguliani.rcode");
+      assert.equal(rcode.productName, "rCode");
+      assert.equal(rcode.artifactName, "rCode-${version}-${arch}.${ext}");
+      assert.deepStrictEqual((rcode.mac as Record<string, unknown>).protocols, [
+        { name: "rCode", schemes: ["rcode"] },
+      ]);
       // Linux must register the renderer schemes so the generated .desktop
       // entry advertises MimeType=x-scheme-handler/t3code; for OAuth deep links.
       assert.deepStrictEqual((linux.linux as Record<string, unknown>).protocols, [
@@ -670,6 +687,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         platform: Option.none(),
         target: Option.none(),
         arch: Option.none(),
+        flavor: Option.none(),
         buildVersion: Option.none(),
         outputDir: Option.none(),
         skipBuild: Option.none(),
@@ -710,6 +728,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             platform: Option.some(platform),
             target: Option.none(),
             arch: Option.some("universal"),
+            flavor: Option.none(),
             buildVersion: Option.none(),
             outputDir: Option.none(),
             skipBuild: Option.none(),
@@ -734,6 +753,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         platform: Option.some("mac"),
         target: Option.none(),
         arch: Option.some("arm64"),
+        flavor: Option.none(),
         buildVersion: Option.none(),
         outputDir: Option.some("release-test"),
         skipBuild: Option.some(false),
