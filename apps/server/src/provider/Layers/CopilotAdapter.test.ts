@@ -1,6 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { CopilotSettings, EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  ApprovalRequestId,
+  CopilotSettings,
+  EnvironmentId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import type {
   PermissionRequest,
   ResumeSessionConfig,
@@ -8,8 +14,11 @@ import type {
   SessionEvent,
 } from "@github/copilot-sdk";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
@@ -17,6 +26,7 @@ import {
   type CopilotClientHandle,
   type CopilotSessionHandle,
   makeCopilotAdapter,
+  mapHistoryToTurns,
 } from "./CopilotAdapter.ts";
 
 const decodeCopilotSettings = Schema.decodeSync(CopilotSettings);
@@ -226,5 +236,158 @@ describe("CopilotAdapter lifecycle", () => {
         });
       }),
     ).pipe(Effect.provide(testLayer));
+  });
+
+  it.effect("keeps assistant usage cumulative across API calls", () => {
+    const threadId = ThreadId.make("cumulative-usage");
+    let capturedConfig: SessionConfig | undefined;
+    const client = makeClient({
+      createSession: async (config) => {
+        capturedConfig = config;
+        return makeSession();
+      },
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const adapter = yield* makeCopilotAdapter(decodeCopilotSettings({}), {
+          clientFactory: () => client,
+        });
+        yield* adapter.startSession(startInput(threadId));
+        const usageEventsFiber = yield* Effect.forkChild(
+          adapter.streamEvents.pipe(
+            Stream.filter((event) => event.type === "thread.token-usage.updated"),
+            Stream.take(2),
+            Stream.runCollect,
+          ),
+          { startImmediately: true },
+        );
+        yield* Effect.yieldNow;
+
+        capturedConfig?.onEvent?.({
+          id: "turn-start",
+          type: "assistant.turn_start",
+          data: { turnId: "provider-turn" },
+          timestamp: "2026-08-07T00:00:00.000Z",
+        } as SessionEvent);
+        capturedConfig?.onEvent?.({
+          id: "usage-1",
+          type: "assistant.usage",
+          data: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 2 },
+          timestamp: "2026-08-07T00:00:01.000Z",
+        } as SessionEvent);
+        capturedConfig?.onEvent?.({
+          id: "usage-2",
+          type: "assistant.usage",
+          data: { inputTokens: 4, outputTokens: 3, cacheReadTokens: 1 },
+          timestamp: "2026-08-07T00:00:02.000Z",
+        } as SessionEvent);
+
+        const usageEvents = yield* Fiber.join(usageEventsFiber);
+        expect(
+          usageEvents.map((event) =>
+            event.type === "thread.token-usage.updated"
+              ? event.payload.usage.totalProcessedTokens
+              : undefined,
+          ),
+        ).toEqual([17, 25]);
+      }),
+    ).pipe(Effect.provide(testLayer));
+  });
+
+  it.effect("remembers accept-for-session decisions for matching permission requests", () => {
+    const threadId = ThreadId.make("session-approval");
+    let capturedConfig: SessionConfig | undefined;
+    const client = makeClient({
+      createSession: async (config) => {
+        capturedConfig = config;
+        return makeSession();
+      },
+    });
+    const request = {
+      kind: "shell",
+      command: "echo allowed",
+      fullCommandText: "echo allowed",
+    } as unknown as PermissionRequest;
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const adapter = yield* makeCopilotAdapter(decodeCopilotSettings({}), {
+          clientFactory: () => client,
+        });
+        yield* adapter.startSession({ threadId, runtimeMode: "approval-required" });
+        const requestEventFiber = yield* Effect.forkChild(
+          adapter.streamEvents.pipe(
+            Stream.filter((event) => event.type === "request.opened"),
+            Stream.runHead,
+          ),
+          { startImmediately: true },
+        );
+        yield* Effect.yieldNow;
+
+        const firstApproval = capturedConfig?.onPermissionRequest?.(request, {
+          sessionId: "copilot-session",
+        });
+        const requestEvent = Option.getOrThrow(yield* Fiber.join(requestEventFiber));
+        if (!requestEvent.requestId) throw new Error("expected approval request id");
+        yield* adapter.respondToRequest(
+          threadId,
+          ApprovalRequestId.make(requestEvent.requestId),
+          "acceptForSession",
+        );
+
+        expect(yield* Effect.promise(() => Promise.resolve(firstApproval))).toEqual({
+          kind: "approved",
+        });
+        expect(
+          yield* Effect.promise(() =>
+            Promise.resolve(
+              capturedConfig?.onPermissionRequest?.(request, { sessionId: "copilot-session" }),
+            ),
+          ),
+        ).toEqual({ kind: "approved" });
+      }),
+    ).pipe(Effect.provide(testLayer));
+  });
+
+  it.effect("reports an existing session as running while its turn is active", () => {
+    const threadId = ThreadId.make("duplicate-running-start");
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const adapter = yield* makeCopilotAdapter(decodeCopilotSettings({}), {
+          clientFactory: () => makeClient({}),
+        });
+        yield* adapter.startSession(startInput(threadId));
+        yield* adapter.sendTurn({ threadId, input: "work", attachments: [] });
+
+        const existing = yield* adapter.startSession(startInput(threadId));
+        expect(existing.status).toBe("running");
+      }),
+    ).pipe(Effect.provide(testLayer));
+  });
+});
+
+describe("mapHistoryToTurns", () => {
+  it("closes persisted turns at assistant.turn_end", () => {
+    const snapshot = mapHistoryToTurns(ThreadId.make("history"), [
+      {
+        type: "assistant.turn_start",
+        data: { turnId: "turn-1" },
+      } as SessionEvent,
+      {
+        type: "assistant.message",
+        data: { messageId: "message-1", content: "done" },
+      } as SessionEvent,
+      { type: "assistant.turn_end", data: { turnId: "turn-1" } } as SessionEvent,
+      { type: "user.message", data: { content: "next" } } as SessionEvent,
+      {
+        type: "assistant.turn_start",
+        data: { turnId: "turn-2" },
+      } as SessionEvent,
+    ]);
+
+    expect(snapshot.turns).toHaveLength(2);
+    expect(snapshot.turns[0]?.items).toHaveLength(3);
+    expect(snapshot.turns[1]?.items).toHaveLength(1);
   });
 });

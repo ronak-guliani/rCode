@@ -72,6 +72,7 @@ export function clearTurnTracking(state: CopilotTurnTrackingState): void {
   state.currentProviderTurnId = undefined;
   state.pendingCompletionTurnId = undefined;
   state.pendingCompletionProviderTurnId = undefined;
+  state.pendingTurnIds = [];
   state.pendingTurnUsage = undefined;
 }
 

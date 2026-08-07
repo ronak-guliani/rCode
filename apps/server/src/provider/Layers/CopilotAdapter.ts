@@ -104,6 +104,7 @@ interface PendingApprovalRequest {
     | "dynamic_tool_call"
     | "unknown";
   readonly turnId: TurnId | undefined;
+  readonly permissionKey: string;
   readonly resolve: (result: PermissionRequestResult) => void;
 }
 
@@ -143,6 +144,8 @@ interface ActiveCopilotSession extends CopilotTurnTrackingState {
   interactionMode: "default" | "plan" | undefined;
   updatedAt: string;
   lastError: string | undefined;
+  totalProcessedTokens: number;
+  approvedPermissionKeys: Set<string>;
   toolTitlesByCallId: Map<string, string>;
   pendingApprovalResolvers: Map<string, PendingApprovalRequest>;
   pendingUserInputResolvers: Map<string, PendingUserInputRequest>;
@@ -236,15 +239,27 @@ function mapSessionUsageInfo(usage: Extract<SessionEvent, { type: "session.usage
   };
 }
 
-function mapAssistantUsage(usage: Extract<SessionEvent, { type: "assistant.usage" }>["data"]) {
+function assistantUsageTokenCount(
+  usage: Extract<SessionEvent, { type: "assistant.usage" }>["data"],
+): number {
+  const inputTokens = toNonNegativeInt(usage.inputTokens);
+  const outputTokens = toNonNegativeInt(usage.outputTokens);
+  const cachedInputTokens = toNonNegativeInt(usage.cacheReadTokens);
+  return (inputTokens ?? 0) + (outputTokens ?? 0) + (cachedInputTokens ?? 0);
+}
+
+function mapAssistantUsage(
+  usage: Extract<SessionEvent, { type: "assistant.usage" }>["data"],
+  totalProcessedTokens: number,
+) {
   const inputTokens = toNonNegativeInt(usage.inputTokens);
   const outputTokens = toNonNegativeInt(usage.outputTokens);
   const cachedInputTokens = toNonNegativeInt(usage.cacheReadTokens);
   const durationMs = toNonNegativeInt(usage.duration);
-  const usedTokens = (inputTokens ?? 0) + (outputTokens ?? 0) + (cachedInputTokens ?? 0);
+  const usedTokens = assistantUsageTokenCount(usage);
   return {
     usedTokens,
-    totalProcessedTokens: usedTokens,
+    totalProcessedTokens,
     ...(inputTokens !== undefined ? { inputTokens } : {}),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(outputTokens !== undefined ? { outputTokens } : {}),
@@ -337,6 +352,10 @@ function requestDetailFromPermissionRequest(request: PermissionRequest): string 
     default:
       return undefined;
   }
+}
+
+function permissionRequestKey(request: PermissionRequest): string {
+  return `${request.kind}:${requestDetailFromPermissionRequest(request) ?? JSON.stringify(request)}`;
 }
 
 function itemTypeFromToolEvent(event: Extract<SessionEvent, { type: "tool.execution_start" }>) {
@@ -493,7 +512,7 @@ export function makeCopilotAdapter(
           new ProviderAdapterRequestError({
             provider: PROVIDER,
             method: "session.mode.set",
-            detail: toMessage(cause, "Failed to switch GitHub Copilot interaction mode."),
+            detail: "Failed to switch GitHub Copilot interaction mode.",
             cause,
           }),
       });
@@ -506,7 +525,7 @@ export function makeCopilotAdapter(
           new ProviderAdapterRequestError({
             provider: PROVIDER,
             method: "session.plan.read",
-            detail: toMessage(cause, "Failed to read the GitHub Copilot plan."),
+            detail: "Failed to read the GitHub Copilot plan.",
             cause,
           }),
       }).pipe(
@@ -765,7 +784,7 @@ export function makeCopilotAdapter(
             {
               ...completionBase,
               type: "thread.token-usage.updated",
-              payload: { usage: mapAssistantUsage(event.data) },
+              payload: { usage: mapAssistantUsage(event.data, record.totalProcessedTokens) },
             },
           ];
         }
@@ -919,6 +938,7 @@ export function makeCopilotAdapter(
         beginCopilotTurn(record, TurnId.make(event.data.turnId));
       }
       if (event.type === "assistant.usage") {
+        record.totalProcessedTokens += assistantUsageTokenCount(event.data);
         recordTurnUsage(record, event.data);
       }
       if (event.type === "session.error") {
@@ -974,16 +994,23 @@ export function makeCopilotAdapter(
       getRuntimeMode: () => ProviderSession["runtimeMode"],
       pendingApprovalResolvers: Map<string, PendingApprovalRequest>,
       pendingUserInputResolvers: Map<string, PendingUserInputRequest>,
+      approvedPermissionKeys: Set<string>,
     ) => {
-      const onPermissionRequest = (request: PermissionRequest) =>
-        getRuntimeMode() === "full-access"
+      const onPermissionRequest = (request: PermissionRequest) => {
+        const permissionKey = permissionRequestKey(request);
+        return getRuntimeMode() === "full-access" || approvedPermissionKeys.has(permissionKey)
           ? Promise.resolve<PermissionRequestResult>({ kind: "approved" })
           : new Promise<PermissionRequestResult>((resolve) => {
               const requestId = `copilot-approval-${NodeCrypto.randomUUID()}`;
               const turnId = getCurrentTurnId();
               const requestType = requestTypeFromPermissionRequest(request);
               const detail = requestDetailFromPermissionRequest(request);
-              pendingApprovalResolvers.set(requestId, { requestType, turnId, resolve });
+              pendingApprovalResolvers.set(requestId, {
+                requestType,
+                turnId,
+                permissionKey,
+                resolve,
+              });
               void emitRuntimeEvents([
                 makeSyntheticEvent(
                   threadId,
@@ -997,6 +1024,7 @@ export function makeCopilotAdapter(
                 ),
               ]);
             });
+      };
 
       const onUserInputRequest = (request: CopilotUserInputRequest) =>
         new Promise<CopilotUserInputResponse>((resolve) => {
@@ -1051,7 +1079,7 @@ export function makeCopilotAdapter(
             new ProviderAdapterProcessError({
               provider: PROVIDER,
               threadId: input.threadId,
-              detail: toMessage(cause, "Failed to start GitHub Copilot client."),
+              detail: "Failed to start GitHub Copilot client.",
               cause,
             }),
         });
@@ -1062,7 +1090,7 @@ export function makeCopilotAdapter(
             new ProviderAdapterProcessError({
               provider: PROVIDER,
               threadId: input.threadId,
-              detail: toMessage(cause, "Failed to load GitHub Copilot model metadata."),
+              detail: "Failed to load GitHub Copilot model metadata.",
               cause,
             }),
         });
@@ -1147,7 +1175,7 @@ export function makeCopilotAdapter(
           new ProviderAdapterRequestError({
             provider: PROVIDER,
             method: "session.setModel",
-            detail: toMessage(cause, "Failed to reconfigure GitHub Copilot session."),
+            detail: "Failed to reconfigure GitHub Copilot session.",
             cause,
           }),
       });
@@ -1222,7 +1250,7 @@ export function makeCopilotAdapter(
 
         const existing = sessions.get(input.threadId);
         if (existing) {
-          return toProviderSession(existing, "ready");
+          return toProviderSession(existing, existing.currentTurnId ? "running" : "ready");
         }
 
         const requestedModelSelection =
@@ -1242,7 +1270,7 @@ export function makeCopilotAdapter(
             new ProviderAdapterProcessError({
               provider: PROVIDER,
               threadId: input.threadId,
-              detail: toMessage(cause, "Failed to load GitHub Copilot MCP configuration."),
+              detail: "Failed to load GitHub Copilot MCP configuration.",
               cause,
             }),
         });
@@ -1266,6 +1294,7 @@ export function makeCopilotAdapter(
         const client = options?.clientFactory?.(clientOptions) ?? new CopilotClient(clientOptions);
         const pendingApprovalResolvers = new Map<string, PendingApprovalRequest>();
         const pendingUserInputResolvers = new Map<string, PendingUserInputRequest>();
+        const approvedPermissionKeys = new Set<string>();
         // Handlers can fire before `createSession` resolves, so they read the
         // record through a mutable binding rather than capturing it.
         let sessionRecord: ActiveCopilotSession | undefined;
@@ -1276,6 +1305,7 @@ export function makeCopilotAdapter(
           () => sessionRecord?.runtimeMode ?? input.runtimeMode,
           pendingApprovalResolvers,
           pendingUserInputResolvers,
+          approvedPermissionKeys,
         );
 
         const session = yield* Effect.gen(function* () {
@@ -1313,7 +1343,7 @@ export function makeCopilotAdapter(
               new ProviderAdapterProcessError({
                 provider: PROVIDER,
                 threadId: input.threadId,
-                detail: toMessage(cause, "Failed to start GitHub Copilot session."),
+                detail: "Failed to start GitHub Copilot session.",
                 cause,
               }),
           });
@@ -1334,6 +1364,8 @@ export function makeCopilotAdapter(
           interactionMode: undefined,
           updatedAt: startedAt,
           lastError: undefined,
+          totalProcessedTokens: 0,
+          approvedPermissionKeys,
           currentTurnId: undefined,
           currentProviderTurnId: undefined,
           pendingCompletionTurnId: undefined,
@@ -1459,7 +1491,7 @@ export function makeCopilotAdapter(
             new ProviderAdapterRequestError({
               provider: PROVIDER,
               method: "session.send",
-              detail: toMessage(cause, "Failed to send GitHub Copilot turn."),
+              detail: "Failed to send GitHub Copilot turn.",
               cause,
             }),
         }).pipe(
@@ -1501,7 +1533,7 @@ export function makeCopilotAdapter(
               new ProviderAdapterRequestError({
                 provider: PROVIDER,
                 method: "session.abort",
-                detail: toMessage(cause, "Failed to interrupt GitHub Copilot turn."),
+                detail: "Failed to interrupt GitHub Copilot turn.",
                 cause,
               }),
           });
@@ -1524,6 +1556,9 @@ export function makeCopilotAdapter(
           });
         }
         record.pendingApprovalResolvers.delete(requestId);
+        if (decision === "acceptForSession") {
+          record.approvedPermissionKeys.add(pending.permissionKey);
+        }
         const resolution = approvalDecisionToPermissionResult(decision);
         pending.resolve(resolution);
         yield* offerRuntimeEvent(
@@ -1574,7 +1609,7 @@ export function makeCopilotAdapter(
               new ProviderAdapterProcessError({
                 provider: PROVIDER,
                 threadId,
-                detail: toMessage(cause, "Failed to stop GitHub Copilot session."),
+                detail: "Failed to stop GitHub Copilot session.",
                 cause,
               }),
           });
@@ -1600,7 +1635,7 @@ export function makeCopilotAdapter(
             new ProviderAdapterRequestError({
               provider: PROVIDER,
               method: "session.getEvents",
-              detail: toMessage(cause, "Failed to read GitHub Copilot thread history."),
+              detail: "Failed to read GitHub Copilot thread history.",
               cause,
             }),
         });
@@ -1625,7 +1660,7 @@ export function makeCopilotAdapter(
           new ProviderAdapterProcessError({
             provider: PROVIDER,
             threadId: ThreadId.make("_all"),
-            detail: toMessage(cause, "Failed to stop GitHub Copilot sessions."),
+            detail: "Failed to stop GitHub Copilot sessions.",
             cause,
           }),
       });
@@ -1684,7 +1719,7 @@ export function mapHistoryToTurns(
     }
 
     current.items.push(event);
-    if (isCopilotTurnTerminalEvent(event)) {
+    if (isCopilotTurnTerminalEvent(event) || event.type === "assistant.turn_end") {
       current = undefined;
     }
   }

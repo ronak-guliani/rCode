@@ -93,7 +93,7 @@ describe("completion parking", () => {
 
   it("reports no refs once the session goes idle", () => {
     const state = makeState();
-    state.pendingTurnIds.push(TurnId.make("ours-1"));
+    state.pendingTurnIds.push(TurnId.make("ours-1"), TurnId.make("queued-after-abort"));
     beginCopilotTurn(state, TurnId.make("provider-1"));
     markTurnAwaitingCompletion(state);
 
@@ -103,6 +103,7 @@ describe("completion parking", () => {
       turnId: undefined,
       providerTurnId: undefined,
     });
+    expect(state.pendingTurnIds).toEqual([]);
   });
 });
 
