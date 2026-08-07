@@ -112,15 +112,16 @@ describe("assistantUsageFields", () => {
     expect(assistantUsageFields(undefined)).toEqual({});
   });
 
-  it("surfaces cost and model when Copilot reports them", () => {
+  it("keeps the billing multiplier in raw usage without reporting USD cost", () => {
     const fields = assistantUsageFields(usage({ cost: 0.42, model: "claude-sonnet-4.6" }));
-    expect(fields.totalCostUsd).toBe(0.42);
+    expect(fields).not.toHaveProperty("totalCostUsd");
+    expect(fields.usage?.cost).toBe(0.42);
     expect(fields.modelUsage).toEqual({ model: "claude-sonnet-4.6" });
   });
 
   it("omits cost and model when absent rather than emitting zeros", () => {
     const fields = assistantUsageFields(usage());
-    expect(fields.totalCostUsd).toBeUndefined();
+    expect(fields).not.toHaveProperty("totalCostUsd");
     expect(fields.modelUsage).toBeUndefined();
     expect(fields.usage).toBeDefined();
   });
