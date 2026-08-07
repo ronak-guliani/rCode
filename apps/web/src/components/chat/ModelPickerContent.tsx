@@ -223,6 +223,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           ...(model.shortName ? { shortName: model.shortName } : {}),
           ...(model.subProvider ? { subProvider: model.subProvider } : {}),
           ...(model.isLegacy ? { isLegacy: true } : {}),
+          ...(model.maxContextWindowTokens !== undefined
+            ? { maxContextWindowTokens: model.maxContextWindowTokens }
+            : {}),
+          ...(model.billingMultiplier !== undefined
+            ? { billingMultiplier: model.billingMultiplier }
+            : {}),
           instanceId,
           driverKind: entry.driverKind,
           instanceDisplayName: entry.displayName,

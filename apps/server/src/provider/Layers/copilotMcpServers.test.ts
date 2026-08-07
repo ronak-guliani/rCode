@@ -24,14 +24,14 @@ describe("loadCopilotMcpServers", () => {
         JSON.stringify({
           mcpServers: {
             local: {
-              command: "node",
+              command: "  /tmp/bin with spaces/node  ",
               args: ["--eval", "  console.log('exact')  "],
               env: { EXACT: "  value  " },
-              cwd: "/tmp/project",
+              cwd: "  /tmp/project with spaces  ",
             },
             remote: {
               type: "http",
-              url: "https://example.test/mcp",
+              url: "  https://example.test/mcp  ",
               headers: { Authorization: "Bearer token-with-space " },
             },
           },
@@ -41,11 +41,13 @@ describe("loadCopilotMcpServers", () => {
       const servers = await loadCopilotMcpServers(configDir);
       expect(servers?.local).toMatchObject({
         type: "local",
+        command: "  /tmp/bin with spaces/node  ",
         args: ["--eval", "  console.log('exact')  "],
         env: { EXACT: "  value  " },
-        workingDirectory: "/tmp/project",
+        workingDirectory: "  /tmp/project with spaces  ",
       });
       expect(servers?.remote).toMatchObject({
+        url: "  https://example.test/mcp  ",
         headers: { Authorization: "Bearer token-with-space " },
       });
     } finally {
