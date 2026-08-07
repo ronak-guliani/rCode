@@ -311,11 +311,11 @@ function approvalDecisionToPermissionResult(
   switch (decision) {
     case "accept":
     case "acceptForSession":
-      return { kind: "approved" };
+      return { kind: "approve-once" };
     case "decline":
     case "cancel":
     default:
-      return { kind: "denied-interactively-by-user" };
+      return { kind: "reject" };
   }
 }
 
@@ -654,7 +654,7 @@ export function makeCopilotAdapter(
             {
               ...base(),
               type: "thread.metadata.updated",
-              payload: { name: event.data.title, metadata: event.data },
+              payload: { name: event.data.title, metadata: { ...event.data } },
             },
           ];
         case "session.model_change":
@@ -692,7 +692,7 @@ export function makeCopilotAdapter(
             {
               ...base(),
               type: "thread.metadata.updated",
-              payload: { metadata: event.data },
+              payload: { metadata: { ...event.data } },
             },
           ];
         case "session.usage_info":
@@ -999,7 +999,7 @@ export function makeCopilotAdapter(
       const onPermissionRequest = (request: PermissionRequest) => {
         const permissionKey = permissionRequestKey(request);
         return getRuntimeMode() === "full-access" || approvedPermissionKeys.has(permissionKey)
-          ? Promise.resolve<PermissionRequestResult>({ kind: "approved" })
+          ? Promise.resolve<PermissionRequestResult>({ kind: "approve-once" })
           : new Promise<PermissionRequestResult>((resolve) => {
               const requestId = `copilot-approval-${NodeCrypto.randomUUID()}`;
               const turnId = getCurrentTurnId();
@@ -1195,7 +1195,7 @@ export function makeCopilotAdapter(
 
     const resolvePendingInteractions = (record: ActiveCopilotSession) => {
       for (const pending of record.pendingApprovalResolvers.values()) {
-        pending.resolve({ kind: "denied-interactively-by-user" });
+        pending.resolve({ kind: "reject" });
       }
       for (const pending of record.pendingUserInputResolvers.values()) {
         pending.resolve({ answer: "", wasFreeform: true });
