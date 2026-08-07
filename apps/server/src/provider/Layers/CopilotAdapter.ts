@@ -872,17 +872,34 @@ export function makeCopilotAdapter(
               : []),
           ];
         }
-        case "skill.invoked":
+        case "skill.invoked": {
+          // Skills are one-shot provider events, not live subagents. A bare
+          // task.progress with no taskType/status stamped them as agents and
+          // pinned sidebar + Agents-panel Working until session death.
+          const taskId = toRuntimeTaskId(event.data.name) ?? RuntimeTaskId.make(event.data.name);
+          const description = `Invoked skill ${event.data.name}`;
           return [
             {
               ...base(),
-              type: "task.progress",
+              type: "task.started",
               payload: {
-                taskId: toRuntimeTaskId(event.data.name) ?? RuntimeTaskId.make(event.data.name),
-                description: `Invoked skill ${event.data.name}`,
+                taskId,
+                description,
+                taskType: "skill",
+              },
+            },
+            {
+              ...base(),
+              type: "task.completed",
+              payload: {
+                taskId,
+                status: "completed" as const,
+                taskType: "skill",
+                summary: description,
               },
             },
           ];
+        }
         case "subagent.started":
           return [
             {

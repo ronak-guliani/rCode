@@ -115,8 +115,25 @@ const ROSTER_LIMIT = 100;
  * reads it. Rows without a stamp — legacy threads, pre-stamp servers — are
  * background by definition: they render in the ordinary work log, exactly
  * as they did before this feature existed.
+ *
+ * Copilot historically emitted skill.invoked as untyped task.progress, which
+ * stamped agentKind=agent with no completion and left Direct spawns stuck on
+ * Working. Treat skill rows (and that legacy label) as background so already
+ * persisted threads recover without a data migration.
  */
 export function isBackgroundTaskActivity(payload: Record<string, unknown>): boolean {
+  if (payload.taskType === "skill") {
+    return true;
+  }
+  const label =
+    (typeof payload.detail === "string" && payload.detail) ||
+    (typeof payload.title === "string" && payload.title) ||
+    (typeof payload.description === "string" && payload.description) ||
+    (typeof payload.summary === "string" && payload.summary) ||
+    "";
+  if (label.startsWith("Invoked skill ")) {
+    return true;
+  }
   return payload.agentKind !== "agent";
 }
 
