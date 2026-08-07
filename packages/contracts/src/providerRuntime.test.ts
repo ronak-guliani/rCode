@@ -192,6 +192,7 @@ describe("classifyTaskAgentKind", () => {
     expect(classifyTaskAgentKind({ taskType: "local_bash" })).toBe("background");
     expect(classifyTaskAgentKind({ taskType: "monitor" })).toBe("background");
     expect(classifyTaskAgentKind({ taskType: "plan" })).toBe("background");
+    expect(classifyTaskAgentKind({ taskType: "skill" })).toBe("background");
   });
 
   it("agent-owned tasks are background unless themselves agent-flavored", () => {

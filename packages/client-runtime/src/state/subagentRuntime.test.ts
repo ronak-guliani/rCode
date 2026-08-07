@@ -110,6 +110,30 @@ describe("foldSubagentActivities", () => {
     expect(agents[0]!.status).toBe("running");
   });
 
+  it("skill invocations never join the Agents roster, including legacy untyped rows", () => {
+    const agents = fold([
+      activity("task.started", {
+        taskId: "skill-create-draft-pr",
+        taskType: "skill",
+        detail: "Invoked skill create-draft-pr",
+      }),
+      activity("task.completed", {
+        taskId: "skill-create-draft-pr",
+        taskType: "skill",
+        status: "completed",
+        summary: "Invoked skill create-draft-pr",
+      }),
+      // Pre-fix Copilot path: untyped task.progress stamped agentKind=agent
+      // with no completion, which used to pin Direct spawns on Working.
+      legacyActivity("task.progress", {
+        taskId: "skill-legacy",
+        detail: "Invoked skill create-draft-pr",
+        agentKind: "agent",
+      }),
+    ]);
+    expect(agents).toHaveLength(0);
+  });
+
   it("completion before start stays terminal; a late start only fills metadata", () => {
     const agents = fold([
       activity("task.completed", {

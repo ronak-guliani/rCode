@@ -147,6 +147,27 @@ describe("ThreadBackgroundLiveness", () => {
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
   });
 
+  it("skill tasks are inert and never pin working", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "t-skill";
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "skill-create-draft-pr",
+      taskType: "skill",
+      status: undefined,
+      kind: "started",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "skill-create-draft-pr",
+      taskType: "skill",
+      status: "completed",
+      kind: "completed",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+  });
+
   it("plan tasks are inert; clear removes everything; instances are isolated", () => {
     const a = ThreadBackgroundLiveness.make();
     const b = ThreadBackgroundLiveness.make();
