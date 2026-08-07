@@ -2,7 +2,7 @@
 
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 
-const HEIGHT_TRANSITION_FALLBACK_MS = 250;
+const HEIGHT_TRANSITION_FALLBACK_MS = 120;
 
 export function AnimatedHeight({ children }: { readonly children: ReactNode }) {
   const contentRef = useRef<HTMLDivElement>(null);

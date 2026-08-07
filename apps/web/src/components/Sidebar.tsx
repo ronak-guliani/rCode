@@ -892,7 +892,6 @@ interface SidebarProjectThreadListProps {
   confirmingArchiveThreadKey: string | null;
   setConfirmingArchiveThreadKey: React.Dispatch<React.SetStateAction<string | null>>;
   confirmArchiveButtonRefs: React.RefObject<Map<string, HTMLButtonElement>>;
-  attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   handleThreadClick: (
     event: React.MouseEvent,
     threadRef: ScopedThreadRef,
@@ -943,7 +942,6 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     confirmingArchiveThreadKey,
     setConfirmingArchiveThreadKey,
     confirmArchiveButtonRefs,
-    attachThreadListAutoAnimateRef,
     handleThreadClick,
     navigateToThread,
     handleMultiSelectContextMenu,
@@ -960,10 +958,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
   const showLessButtonRender = useMemo(() => <button type="button" />, []);
 
   return (
-    <SidebarMenuSub
-      ref={attachThreadListAutoAnimateRef}
-      className="mx-0.5 my-0 w-full translate-x-0 gap-0.5 overflow-hidden border-l-0 px-1 py-0 sm:mx-1 sm:px-1.5"
-    >
+    <SidebarMenuSub className="mx-0.5 my-0 w-full translate-x-0 gap-0.5 overflow-hidden border-l-0 px-1 py-0 sm:mx-1 sm:px-1.5">
       {shouldShowThreadPanel && showEmptyThreadState ? (
         <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
           <div
@@ -1054,7 +1049,6 @@ interface SidebarProjectItemProps {
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   threadJumpLabelByKey: ReadonlyMap<string, string>;
-  attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
   dragInProgressRef: React.RefObject<boolean>;
@@ -1074,7 +1068,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     archiveThread,
     deleteThread,
     threadJumpLabelByKey,
-    attachThreadListAutoAnimateRef,
     expandThreadListForProject,
     collapseThreadListForProject,
     dragInProgressRef,
@@ -2336,7 +2329,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         confirmingArchiveThreadKey={confirmingArchiveThreadKey}
         setConfirmingArchiveThreadKey={setConfirmingArchiveThreadKey}
         confirmArchiveButtonRefs={confirmArchiveButtonRefs}
-        attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
         handleThreadClick={handleThreadClick}
         navigateToThread={navigateToThread}
         handleMultiSelectContextMenu={handleMultiSelectContextMenu}
@@ -2744,13 +2736,11 @@ interface SidebarProjectsContentProps {
   newThreadShortcutLabel: string | null;
   commandPaletteShortcutLabel: string | null;
   threadJumpLabelByKey: ReadonlyMap<string, string>;
-  attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
   dragInProgressRef: React.RefObject<boolean>;
   suppressProjectClickAfterDragRef: React.RefObject<boolean>;
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
-  attachProjectListAutoAnimateRef: (node: HTMLElement | null) => void;
   projectsLength: number;
 }
 
@@ -2784,13 +2774,11 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     newThreadShortcutLabel,
     commandPaletteShortcutLabel,
     threadJumpLabelByKey,
-    attachThreadListAutoAnimateRef,
     expandThreadListForProject,
     collapseThreadListForProject,
     dragInProgressRef,
     suppressProjectClickAfterDragRef,
     suppressProjectClickForContextMenuRef,
-    attachProjectListAutoAnimateRef,
     projectsLength,
   } = props;
 
@@ -2926,7 +2914,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         archiveThread={archiveThread}
                         deleteThread={deleteThread}
                         threadJumpLabelByKey={threadJumpLabelByKey}
-                        attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
                         expandThreadListForProject={expandThreadListForProject}
                         collapseThreadListForProject={collapseThreadListForProject}
                         dragInProgressRef={dragInProgressRef}
@@ -2944,7 +2931,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             </SidebarMenu>
           </DndContext>
         ) : (
-          <SidebarMenu ref={attachProjectListAutoAnimateRef}>
+          <SidebarMenu>
             {sortedProjects.map((project) => (
               <SidebarProjectListRow
                 key={project.projectKey}
@@ -2958,7 +2945,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 archiveThread={archiveThread}
                 deleteThread={deleteThread}
                 threadJumpLabelByKey={threadJumpLabelByKey}
-                attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
                 expandThreadListForProject={expandThreadListForProject}
                 collapseThreadListForProject={collapseThreadListForProject}
                 dragInProgressRef={dragInProgressRef}
@@ -3232,14 +3218,6 @@ export default function Sidebar() {
 
   const handleProjectDragCancel = useCallback((_event: DragCancelEvent) => {
     dragInProgressRef.current = false;
-  }, []);
-
-  const attachProjectListAutoAnimateRef = useCallback((node: HTMLElement | null) => {
-    void node;
-  }, []);
-
-  const attachThreadListAutoAnimateRef = useCallback((node: HTMLElement | null) => {
-    void node;
   }, []);
 
   const visibleThreads = useMemo(
@@ -3604,13 +3582,11 @@ export default function Sidebar() {
             newThreadShortcutLabel={newThreadShortcutLabel}
             commandPaletteShortcutLabel={commandPaletteShortcutLabel}
             threadJumpLabelByKey={visibleThreadJumpLabelByKey}
-            attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
             expandThreadListForProject={expandThreadListForProject}
             collapseThreadListForProject={collapseThreadListForProject}
             dragInProgressRef={dragInProgressRef}
             suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
             suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
-            attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
             projectsLength={projects.length}
           />
           <SidebarChromeFooter />
