@@ -328,6 +328,67 @@ describe("CopilotAdapter lifecycle", () => {
     ).pipe(Effect.provide(testLayer));
   });
 
+  it.effect("emits a completed skill task for skill invocations", () => {
+    const threadId = ThreadId.make("skill-invocation");
+    let capturedConfig: SessionConfig | undefined;
+    const client = makeClient({
+      createSession: async (config) => {
+        capturedConfig = config;
+        return makeSession();
+      },
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const adapter = yield* makeCopilotAdapter(decodeCopilotSettings({}), {
+          clientFactory: () => client,
+        });
+        yield* adapter.startSession(startInput(threadId));
+        const taskEventsFiber = yield* Effect.forkChild(
+          adapter.streamEvents.pipe(
+            Stream.filter((event) => event.type.startsWith("task.")),
+            Stream.take(2),
+            Stream.runCollect,
+          ),
+          { startImmediately: true },
+        );
+        yield* Effect.yieldNow;
+
+        capturedConfig?.onEvent?.({
+          id: "skill-invoked",
+          type: "skill.invoked",
+          data: { name: "pdf" },
+          timestamp: "2026-08-07T00:00:00.000Z",
+        } as SessionEvent);
+
+        expect(
+          (yield* Fiber.join(taskEventsFiber)).map((event) => ({
+            type: event.type,
+            payload: event.payload,
+          })),
+        ).toEqual([
+          {
+            type: "task.started",
+            payload: {
+              taskId: "pdf",
+              description: "Invoked skill pdf",
+              taskType: "skill",
+            },
+          },
+          {
+            type: "task.completed",
+            payload: {
+              taskId: "pdf",
+              status: "completed",
+              taskType: "skill",
+              summary: "Invoked skill pdf",
+            },
+          },
+        ]);
+      }),
+    ).pipe(Effect.provide(testLayer));
+  });
+
   it.effect("remembers accept-for-session decisions for matching permission requests", () => {
     const threadId = ThreadId.make("session-approval");
     let capturedConfig: SessionConfig | undefined;
