@@ -74,6 +74,8 @@ export interface AppModelOption {
   name: string;
   shortName?: string;
   subProvider?: string;
+  maxContextWindowTokens?: number;
+  billingMultiplier?: number;
   isCustom: boolean;
   isDefault?: boolean;
   isLegacy?: boolean;
@@ -87,6 +89,10 @@ function toAppModelOption(model: ServerProvider["models"][number]): AppModelOpti
   };
   if (model.shortName) option.shortName = model.shortName;
   if (model.subProvider) option.subProvider = model.subProvider;
+  if (model.maxContextWindowTokens !== undefined) {
+    option.maxContextWindowTokens = model.maxContextWindowTokens;
+  }
+  if (model.billingMultiplier !== undefined) option.billingMultiplier = model.billingMultiplier;
   if (model.isDefault) option.isDefault = true;
   if (model.isLegacy) option.isLegacy = true;
   return option;

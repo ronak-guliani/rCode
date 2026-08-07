@@ -12,6 +12,12 @@ function provider(input: {
   provider?: ProviderDriverKind;
   instanceId: string;
   models?: ReadonlyArray<string>;
+  modelMetadata?: Readonly<
+    Record<
+      string,
+      { readonly maxContextWindowTokens?: number; readonly billingMultiplier?: number }
+    >
+  >;
 }): ServerProvider {
   const driver =
     input.provider ??
@@ -32,6 +38,7 @@ function provider(input: {
       name: slug,
       isCustom: false,
       capabilities: {},
+      ...input.modelMetadata?.[slug],
     })),
     slashCommands: [],
     skills: [],
@@ -71,6 +78,28 @@ describe("instance-scoped model selection", () => {
     expect(getAppModelOptionsForInstance(settingsWithProviderInstances(), stock)[0]?.isLegacy).toBe(
       true,
     );
+  });
+
+  it("preserves provider context-window and billing metadata", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("copilot"),
+        instanceId: "copilot",
+        models: ["gpt-5-mini"],
+        modelMetadata: {
+          "gpt-5-mini": { maxContextWindowTokens: 128_000, billingMultiplier: 0 },
+        },
+      }),
+    ];
+    const entry = deriveProviderInstanceEntries(providers)[0]!;
+
+    expect(getAppModelOptionsForInstance(DEFAULT_UNIFIED_SETTINGS, entry)).toEqual([
+      expect.objectContaining({
+        slug: "gpt-5-mini",
+        maxContextWindowTokens: 128_000,
+        billingMultiplier: 0,
+      }),
+    ]);
   });
 
   it("keeps custom models on the provider instance that declared them", () => {
