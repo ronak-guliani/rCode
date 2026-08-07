@@ -8,6 +8,7 @@ import * as Electron from "electron";
 
 export interface ElectronAppMetadata {
   readonly appVersion: string;
+  readonly productName: string;
   readonly appPath: string;
   readonly isPackaged: boolean;
   readonly resourcesPath: string;
@@ -56,7 +57,7 @@ export class ElectronApp extends Context.Service<
       options: Electron.AboutPanelOptionsOptions,
     ) => Effect.Effect<void>;
     readonly setAppUserModelId: (id: string) => Effect.Effect<void>;
-    readonly requestSingleInstanceLock: Effect.Effect<boolean>;
+    readonly getAppMetrics: Effect.Effect<ReadonlyArray<Electron.ProcessMetric>>;
     readonly isDefaultProtocolClient: (protocol: string) => Effect.Effect<boolean>;
     readonly setAsDefaultProtocolClient: (
       protocol: string,
@@ -69,6 +70,7 @@ export class ElectronApp extends Context.Service<
     readonly onBeforeQuitForUpdate: (
       listener: () => void,
     ) => Effect.Effect<void, never, Scope.Scope>;
+    readonly removeCommandLineSwitch: (switchName: string) => Effect.Effect<void>;
     readonly on: <Args extends ReadonlyArray<unknown>>(
       eventName: string,
       listener: (...args: Args) => void,
@@ -111,6 +113,7 @@ export const make = ElectronApp.of({
 
     return {
       appVersion,
+      productName: Electron.app.name,
       appPath,
       isPackaged: Electron.app.isPackaged,
       resourcesPath: process.resourcesPath,
@@ -152,7 +155,7 @@ export const make = ElectronApp.of({
     Effect.sync(() => {
       Electron.app.setAppUserModelId(id);
     }),
-  requestSingleInstanceLock: Effect.sync(() => Electron.app.requestSingleInstanceLock()),
+  getAppMetrics: Effect.sync(() => Electron.app.getAppMetrics()),
   isDefaultProtocolClient: (protocol) =>
     Effect.sync(() => Electron.app.isDefaultProtocolClient(protocol)),
   setAsDefaultProtocolClient: (protocol, path, args) =>
@@ -191,6 +194,10 @@ export const make = ElectronApp.of({
           Electron.autoUpdater.removeListener("before-quit-for-update", listener);
         }),
     ).pipe(Effect.asVoid),
+  removeCommandLineSwitch: (switchName) =>
+    Effect.sync(() => {
+      Electron.app.commandLine.removeSwitch(switchName);
+    }),
   on: addScopedAppListener,
 });
 

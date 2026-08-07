@@ -11,6 +11,7 @@ import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/rela
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
@@ -71,12 +72,12 @@ export const desktopClerkFrontendApiHostname = resolveDesktopClerkFrontendApiHos
     : __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__,
 );
 
-export function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean) {
+export function createDesktopClerkBridge(stateDir: string, desktopScheme: string) {
   return createClerkBridge({
     storage: storage({ path: stateDir }),
     passkeys: true,
     renderer: {
-      scheme: ElectronProtocol.getDesktopScheme(isDevelopment),
+      scheme: desktopScheme,
       host: ElectronProtocol.DESKTOP_HOST,
     },
   });
@@ -84,13 +85,24 @@ export function createDesktopClerkBridge(stateDir: string, isDevelopment: boolea
 
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  yield* Effect.acquireRelease(
+  const electronApp = yield* ElectronApp.ElectronApp;
+
+  // Electron scopes the single-instance lock to the userData directory and
+  // creates that directory when the lock is acquired. The SDK bridge takes
+  // the lock at creation, so userData must already point at the real
+  // directory here — under the default productName-derived path, acquiring
+  // the lock would create "T3 Code (Alpha)" and make the legacy-install
+  // detection in resolveUserDataPath match on fresh installs.
+  const userDataPath = yield* DesktopAppIdentity.resolveUserDataPath;
+  yield* electronApp.setPath("userData", userDataPath);
+
+  const bridge = yield* Effect.acquireRelease(
     Effect.try({
-      try: () => createDesktopClerkBridge(environment.stateDir, environment.isDevelopment),
+      try: () => createDesktopClerkBridge(environment.stateDir, environment.desktopScheme),
       catch: (cause) =>
         new DesktopClerkBridgeInitializationError({
           stateDir: environment.stateDir,
-          isDevelopment: environment.isDevelopment,
+          isDevelopment: environment.isDevelopment || environment.isRCode,
           cause,
         }),
     }),
@@ -100,7 +112,7 @@ export const make = Effect.gen(function* () {
         catch: (cause) =>
           new DesktopClerkBridgeCleanupError({
             stateDir: environment.stateDir,
-            isDevelopment: environment.isDevelopment,
+            isDevelopment: environment.isDevelopment || environment.isRCode,
             cause,
           }),
       }).pipe(Effect.orDie),
@@ -113,7 +125,12 @@ export const make = Effect.gen(function* () {
       const context = yield* Effect.context<ElectronWindow.ElectronWindow>();
       const runPromise = Effect.runPromiseWith(context);
 
-      if (!(yield* electronApp.requestSingleInstanceLock)) {
+      // The SDK bridge holds Electron's single-instance lock (acquired at
+      // bridge creation) so OAuth deep-link callbacks on Windows/Linux are
+      // forwarded to the running app. In a secondary instance the bridge has
+      // already begun quitting the app; app.quit() is asynchronous, so stop
+      // bootstrap here before whenReady can fire.
+      if (!bridge.isPrimaryInstance) {
         yield* electronApp.quit;
         return yield* Effect.interrupt;
       }

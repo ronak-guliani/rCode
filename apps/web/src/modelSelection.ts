@@ -78,6 +78,7 @@ export interface AppModelOption {
   billingMultiplier?: number;
   isCustom: boolean;
   isDefault?: boolean;
+  isLegacy?: boolean;
 }
 
 function toAppModelOption(model: ServerProvider["models"][number]): AppModelOption {
@@ -93,6 +94,7 @@ function toAppModelOption(model: ServerProvider["models"][number]): AppModelOpti
   }
   if (model.billingMultiplier !== undefined) option.billingMultiplier = model.billingMultiplier;
   if (model.isDefault) option.isDefault = true;
+  if (model.isLegacy) option.isLegacy = true;
   return option;
 }
 

@@ -35,6 +35,7 @@ export type ModelEsque = {
   name: string;
   shortName?: string | undefined;
   subProvider?: string | undefined;
+  isLegacy?: boolean | undefined;
   /** Fixed per-model context window reported by the provider, in tokens. */
   maxContextWindowTokens?: number | undefined;
   /** Premium-request multiplier for subscription-metered providers. */

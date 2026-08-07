@@ -17,6 +17,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 
+import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeCopilotTextGeneration } from "../../textGeneration/CopilotTextGeneration.ts";
@@ -59,6 +60,7 @@ const UPDATE = makeStaticProviderMaintenanceResolver(
 );
 
 export type CopilotDriverEnv =
+  | BackgroundPolicy.BackgroundPolicy
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path

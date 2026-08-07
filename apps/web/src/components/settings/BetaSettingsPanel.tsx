@@ -8,6 +8,7 @@ import {
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 
 const AUTO_SETTLE_MIN_DAYS = 1;
 const AUTO_SETTLE_MAX_DAYS = 90;
@@ -59,13 +60,14 @@ export function BetaSettingsPanel() {
   const sidebarAutoSettleAfterDays = useClientSettings(
     (settings) => settings.sidebarAutoSettleAfterDays,
   );
+  const planModeEnabled = useClientSettings((settings) => settings.planModeEnabled);
   const updateSettings = useUpdateClientSettings();
 
   return (
     <SettingsPageContainer>
       <SettingsSection title="Beta features">
         <SettingsRow
-          title="Sidebar v2"
+          {...searchableSetting("sidebar-v2")}
           description="One flat thread list in creation order. Active work renders as rich cards; settled threads collapse to compact rows. Settling requires an up-to-date server — on older servers threads simply stay active. Switch back any time."
           control={
             <Switch
@@ -85,7 +87,7 @@ export function BetaSettingsPanel() {
         {sidebarV2Enabled ? (
           <>
             <SettingsRow
-              title="Auto-settle inactive threads"
+              title={searchableSetting("auto-settle-inactive-threads").title}
               description="Threads with no activity for this long settle automatically. Threads on merged or closed PRs always settle."
               control={
                 <Switch
@@ -113,6 +115,17 @@ export function BetaSettingsPanel() {
             ) : null}
           </>
         ) : null}
+        <SettingsRow
+          {...searchableSetting("restore-plan-mode")}
+          description="Legacy feature. Brings back the Build/Plan toggle in the composer along with the /plan and /default commands and the Shift+Tab shortcut. While off, every thread runs in build mode."
+          control={
+            <Switch
+              checked={planModeEnabled}
+              onCheckedChange={(checked) => updateSettings({ planModeEnabled: Boolean(checked) })}
+              aria-label="Restore plan mode (legacy)"
+            />
+          }
+        />
       </SettingsSection>
     </SettingsPageContainer>
   );
