@@ -1090,7 +1090,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   // user message; subagent/fan-out turns between them ride along — or hits the
   // `maxRawTurns` ceiling that bounds pathological fan-out. The `candidates`
   // CTE applies the keyset bound and LIMIT before the window functions run;
-  // its ORDER BY uses raw columns so the migration-037
+  // its ORDER BY uses raw columns so the migration-067
   // (thread_id, requested_at, turn_id) index serves both range and order with
   // no temp B-tree — the scan is genuinely bounded by the LIMIT. (Raw
   // turn_id DESC places NULLs exactly where COALESCE-to-'' would, below every
