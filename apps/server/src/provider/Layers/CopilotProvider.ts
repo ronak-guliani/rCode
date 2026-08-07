@@ -36,7 +36,9 @@ import {
 } from "@github/copilot-sdk";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { HttpClient } from "effect/unstable/http";
@@ -82,17 +84,41 @@ const REASONING_EFFORT_LABELS: Record<CopilotReasoningEffort, string> = {
 /** Copilot's model probe spawns the CLI; give it room on a cold start. */
 const MODEL_DISCOVERY_TIMEOUT_MS = 20_000;
 
+interface CopilotProbeClient {
+  readonly start: () => Promise<unknown>;
+  readonly listModels: () => Promise<ReadonlyArray<ModelInfo>>;
+  readonly stop: () => Promise<unknown>;
+}
+
+interface CopilotProbeOptions {
+  readonly clientFactory?: (options: CopilotClientOptions) => CopilotProbeClient;
+  readonly timeoutMs?: number;
+}
+
+const stopClientWithin = Effect.fn("CopilotProvider.stopClientWithin")(function* (
+  client: CopilotProbeClient,
+  timeoutMs: number,
+) {
+  const stopFiber = yield* Effect.promise(() => client.stop().catch(() => undefined)).pipe(
+    Effect.asVoid,
+    Effect.forkDetach({ startImmediately: true }),
+  );
+  yield* Effect.raceFirst(Fiber.join(stopFiber), Effect.sleep(Duration.millis(timeoutMs)));
+});
+
 /**
  * The SDK throws untyped `Error`s. Wrapping them keeps the probe's failure
  * channel tagged, and preserves the human-readable text we sniff for auth
  * state in {@link copilotAuthStatusFromMessage}.
  */
 class CopilotProbeError extends Schema.TaggedErrorClass<CopilotProbeError>()("CopilotProbeError", {
-  detail: Schema.String,
-  cause: Schema.optional(Schema.Defect()),
+  stage: Schema.Literals(["start", "listModels"]),
+  cause: Schema.Defect(),
 }) {
   override get message(): string {
-    return this.detail;
+    return this.stage === "start"
+      ? "Failed to start GitHub Copilot."
+      : "Failed to list GitHub Copilot models.";
   }
 }
 
@@ -412,6 +438,7 @@ export function buildInitialCopilotProviderSnapshot(
 export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus")(function* (
   settings: CopilotSettings,
   environment?: NodeJS.ProcessEnv,
+  options?: CopilotProbeOptions,
 ): Effect.fn.Return<ServerProviderDraft, never, never> {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
 
@@ -431,24 +458,27 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
     });
   }
 
-  const client = new CopilotClient(
-    yield* makeCopilotClientOptions(settings, environment ? { environment } : undefined),
+  const clientOptions = yield* makeCopilotClientOptions(
+    settings,
+    environment ? { environment } : undefined,
   );
-  const probe = yield* Effect.tryPromise({
-    try: async () => {
-      await client.start();
-      return { models: await client.listModels() };
-    },
-    catch: (cause) =>
-      new CopilotProbeError({
-        detail: toMessage(cause, "Failed to start GitHub Copilot."),
-        cause,
-      }),
+  const client = options?.clientFactory?.(clientOptions) ?? new CopilotClient(clientOptions);
+  const timeoutMs = options?.timeoutMs ?? MODEL_DISCOVERY_TIMEOUT_MS;
+  const probe = yield* Effect.gen(function* () {
+    yield* Effect.tryPromise({
+      try: () => client.start(),
+      catch: (cause) => new CopilotProbeError({ stage: "start", cause }),
+    });
+    const models = yield* Effect.tryPromise({
+      try: () => client.listModels(),
+      catch: (cause) => new CopilotProbeError({ stage: "listModels", cause }),
+    });
+    return { models };
   }).pipe(
     // `client.stop()` must run whether the probe succeeded, failed, or timed
     // out — otherwise every refresh leaks a CLI child process.
-    Effect.ensuring(Effect.promise(() => client.stop().catch(() => []))),
-    Effect.timeoutOption(MODEL_DISCOVERY_TIMEOUT_MS),
+    Effect.ensuring(stopClientWithin(client, timeoutMs)),
+    Effect.timeoutOption(timeoutMs),
     Effect.result,
   );
 
@@ -472,9 +502,7 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
   }
 
   if (Result.isSuccess(probe)) {
-    yield* Effect.logWarning(
-      `GitHub Copilot model discovery timed out after ${MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
-    );
+    yield* Effect.logWarning(`GitHub Copilot model discovery timed out after ${timeoutMs}ms.`);
     return buildServerProvider({
       presentation: COPILOT_PRESENTATION,
       enabled: settings.enabled,
@@ -485,12 +513,12 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message: `GitHub Copilot CLI did not respond within ${MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
+        message: `GitHub Copilot CLI did not respond within ${timeoutMs}ms.`,
       },
     });
   }
 
-  const message = probe.failure.detail;
+  const message = toMessage(probe.failure.cause, probe.failure.message);
   const auth = copilotAuthStatusFromMessage(message);
   yield* Effect.logWarning("GitHub Copilot health check failed.", {
     errorTag: probe.failure._tag,

@@ -1,12 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { CopilotSettings } from "@t3tools/contracts";
 import type { ModelInfo } from "@github/copilot-sdk";
 
 import {
   buildCopilotEffortDescriptors,
   buildInitialCopilotProviderSnapshot,
+  checkCopilotProviderStatus,
   copilotAuthStatusFromMessage,
   copilotModelFromInfo,
   copilotModelsFromInfos,
@@ -85,6 +87,29 @@ describe("buildInitialCopilotProviderSnapshot", () => {
       const custom = snapshot.models.find((model) => model.slug === "some-private-preview");
       expect(custom?.isCustom).toBe(true);
     }),
+  );
+});
+
+describe("checkCopilotProviderStatus", () => {
+  it.effect("bounds cleanup when both the probe and client shutdown hang", () =>
+    Effect.gen(function* () {
+      const never = new Promise<never>(() => undefined);
+      const snapshot = yield* checkCopilotProviderStatus(decodeCopilotSettings({}), undefined, {
+        timeoutMs: 1,
+        clientFactory: () => ({
+          start: () => never,
+          listModels: () => never,
+          stop: () => never,
+        }),
+      });
+
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.message).toContain("did not respond within 1ms");
+    }).pipe(
+      Effect.provideService(HostProcessPlatform, "darwin"),
+      Effect.provideService(HostProcessArchitecture, "arm64"),
+      TestClock.withLive,
+    ),
   );
 });
 

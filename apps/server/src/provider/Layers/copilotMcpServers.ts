@@ -77,13 +77,13 @@ function toMcpServerConfig(entry: unknown): MCPServerConfig | undefined {
   }
 
   const type = asNonEmptyString(record.type);
-  const command = asNonEmptyString(record.command);
+  const command = asNonBlankValue(record.command);
   const args = asStringArray(record.args) ?? [];
-  const url = asNonEmptyString(record.url);
+  const url = asNonBlankValue(record.url);
   const tools = normalizeTools(record.tools);
   const timeout = asTimeout(record.timeout);
   const env = asStringRecord(record.env);
-  const cwd = asNonEmptyString(record.cwd);
+  const cwd = asNonBlankValue(record.cwd);
   const headers = asStringRecord(record.headers);
 
   if (command && (type === undefined || type === "local" || type === "stdio")) {
