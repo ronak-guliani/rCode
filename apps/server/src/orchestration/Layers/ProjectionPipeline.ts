@@ -18,8 +18,11 @@ import { OrchestrationEventStore } from "../../persistence/Services/Orchestratio
 import { ProjectionPendingApprovalRepository } from "../../persistence/Services/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
 import { ProjectionStateRepository } from "../../persistence/Services/ProjectionState.ts";
-import { ProjectionThreadActivityRepository } from "../../persistence/Services/ProjectionThreadActivities.ts";
-import { type ProjectionThreadActivity } from "../../persistence/Services/ProjectionThreadActivities.ts";
+import {
+  PENDING_USER_INPUT_ACTIVITY_KINDS,
+  ProjectionThreadActivityRepository,
+  type ProjectionThreadActivity,
+} from "../../persistence/Services/ProjectionThreadActivities.ts";
 import {
   type ProjectionThreadMessage,
   ProjectionThreadMessageRepository,
@@ -130,6 +133,19 @@ function isStalePendingApprovalFailureDetail(detail: string | null): boolean {
   );
 }
 
+type PendingUserInputActivityKind = (typeof PENDING_USER_INPUT_ACTIVITY_KINDS)[number];
+
+function isPendingUserInputActivityKind(kind: string): kind is PendingUserInputActivityKind {
+  return (PENDING_USER_INPUT_ACTIVITY_KINDS as readonly string[]).includes(kind);
+}
+
+/**
+ * Count user-input requests still awaiting a response.
+ *
+ * Only inspects the kinds listed in `PENDING_USER_INPUT_ACTIVITY_KINDS`; callers
+ * may pass a pre-filtered set. Exhaustiveness on that union keeps the branches
+ * aligned with the SQL filter.
+ */
 function derivePendingUserInputCountFromActivities(
   activities: ReadonlyArray<ProjectionThreadActivity>,
 ): number {
@@ -141,6 +157,10 @@ function derivePendingUserInputCountFromActivities(
   );
 
   for (const activity of ordered) {
+    if (!isPendingUserInputActivityKind(activity.kind)) {
+      continue;
+    }
+
     const requestId = extractActivityRequestId(activity.payload);
     if (requestId === null) {
       continue;
@@ -151,25 +171,29 @@ function derivePendingUserInputCountFromActivities(
         : null;
     const detail = typeof payload?.detail === "string" ? payload.detail.toLowerCase() : null;
 
-    if (activity.kind === "user-input.requested") {
-      openRequestIds.add(requestId);
-      continue;
-    }
-
-    if (activity.kind === "user-input.resolved") {
-      openRequestIds.delete(requestId);
-      continue;
-    }
-
-    if (
-      activity.kind === "provider.user-input.respond.failed" &&
-      detail !== null &&
-      (detail.includes("stale pending user-input request") ||
-        detail.includes("unknown pending user-input request") ||
-        detail.includes("unknown pending user input request") ||
-        detail.includes("unknown pending codex user input request"))
-    ) {
-      openRequestIds.delete(requestId);
+    switch (activity.kind) {
+      case "user-input.requested":
+        openRequestIds.add(requestId);
+        break;
+      case "user-input.resolved":
+        openRequestIds.delete(requestId);
+        break;
+      case "provider.user-input.respond.failed":
+        if (
+          detail !== null &&
+          (detail.includes("stale pending user-input request") ||
+            detail.includes("unknown pending user-input request") ||
+            detail.includes("unknown pending user input request") ||
+            detail.includes("unknown pending codex user input request"))
+        ) {
+          openRequestIds.delete(requestId);
+        }
+        break;
+      default: {
+        const _exhaustive: never = activity.kind;
+        void _exhaustive;
+        break;
+      }
     }
   }
 
@@ -554,27 +578,18 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         return;
       }
 
-      const [messages, proposedPlans, activities, pendingApprovals] = yield* Effect.all([
-        projectionThreadMessageRepository.listByThreadId({ threadId }),
-        projectionThreadProposedPlanRepository.listByThreadId({ threadId }),
-        projectionThreadActivityRepository.listByThreadId({ threadId }),
-        projectionPendingApprovalRepository.listByThreadId({ threadId }),
-      ]);
-
-      let latestUserMessageAt: string | null = null;
-      for (const message of messages) {
-        if (
-          message.role === "user" &&
-          (latestUserMessageAt === null || message.createdAt > latestUserMessageAt)
-        ) {
-          latestUserMessageAt = message.createdAt;
-        }
-      }
+      const [latestUserMessageAt, proposedPlans, userInputActivities, pendingApprovals] =
+        yield* Effect.all([
+          projectionThreadMessageRepository.getLatestUserMessageAt({ threadId }),
+          projectionThreadProposedPlanRepository.listByThreadId({ threadId }),
+          projectionThreadActivityRepository.listUserInputActivitiesByThreadId({ threadId }),
+          projectionPendingApprovalRepository.listByThreadId({ threadId }),
+        ]);
 
       const pendingApprovalCount = pendingApprovals.filter(
         (approval) => approval.status === "pending",
       ).length;
-      const pendingUserInputCount = derivePendingUserInputCountFromActivities(activities);
+      const pendingUserInputCount = derivePendingUserInputCountFromActivities(userInputActivities);
       const hasActionableProposedPlan = deriveHasActionableProposedPlan({
         latestTurnId: existingRow.value.latestTurnId,
         proposedPlans,
