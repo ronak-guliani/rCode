@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 import { ChatAttachment, IsoDateTime } from "@t3tools/contracts";
 
-import { toPersistenceSqlError } from "../Errors.ts";
+import { toPersistenceDecodeError, toPersistenceSqlError } from "../Errors.ts";
 import {
   GetLatestUserMessageAtInput,
   GetProjectionThreadMessageInput,
@@ -24,6 +24,13 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
   }),
 );
+
+function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
+  return (cause: unknown) =>
+    Schema.isSchemaError(cause)
+      ? toPersistenceDecodeError(decodeOperation)(cause)
+      : toPersistenceSqlError(sqlOperation)(cause);
+}
 
 function toProjectionThreadMessage(
   row: Schema.Schema.Type<typeof ProjectionThreadMessageDbRowSchema>,
@@ -184,7 +191,10 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
   ) =>
     getLatestUserMessageAtRow(input).pipe(
       Effect.mapError(
-        toPersistenceSqlError("ProjectionThreadMessageRepository.getLatestUserMessageAt:query"),
+        toPersistenceSqlOrDecodeError(
+          "ProjectionThreadMessageRepository.getLatestUserMessageAt:query",
+          "ProjectionThreadMessageRepository.getLatestUserMessageAt:decodeRows",
+        ),
       ),
       Effect.map(
         Option.match({
