@@ -38,6 +38,24 @@ export const ListProjectionThreadActivitiesInput = Schema.Struct({
 });
 export type ListProjectionThreadActivitiesInput = typeof ListProjectionThreadActivitiesInput.Type;
 
+/**
+ * Activity kinds that can open or close a pending user-input request.
+ *
+ * Kept in sync with the pending user-input derivation in ProjectionPipeline so
+ * the shell summary can query only the rows that can change the count.
+ */
+export const PENDING_USER_INPUT_ACTIVITY_KINDS = [
+  "user-input.requested",
+  "user-input.resolved",
+  "provider.user-input.respond.failed",
+] as const;
+
+export const ListProjectionThreadUserInputActivitiesInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type ListProjectionThreadUserInputActivitiesInput =
+  typeof ListProjectionThreadUserInputActivitiesInput.Type;
+
 export const DeleteProjectionThreadActivitiesInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -65,6 +83,17 @@ export interface ProjectionThreadActivityRepositoryShape {
    */
   readonly listByThreadId: (
     input: ListProjectionThreadActivitiesInput,
+  ) => Effect.Effect<ReadonlyArray<ProjectionThreadActivity>, ProjectionRepositoryError>;
+
+  /**
+   * List only the activity rows that can open or close a pending user-input
+   * request, in the same order as `listByThreadId`.
+   *
+   * Filters by kind in SQL so shell-summary refreshes never decode unrelated
+   * activity payloads (tool results dominate that set).
+   */
+  readonly listUserInputActivitiesByThreadId: (
+    input: ListProjectionThreadUserInputActivitiesInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadActivity>, ProjectionRepositoryError>;
 
   /**

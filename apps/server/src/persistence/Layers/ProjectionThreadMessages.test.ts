@@ -111,4 +111,62 @@ layer("ProjectionThreadMessageRepository", (it) => {
       assert.deepEqual(rows[0]?.attachments, []);
     }),
   );
+
+  it.effect("getLatestUserMessageAt returns null when a thread has no user messages", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.make("thread-latest-user-none");
+
+      yield* repository.upsert({
+        messageId: MessageId.make("message-latest-user-none-1"),
+        threadId,
+        turnId: null,
+        role: "assistant",
+        text: "assistant only",
+        isStreaming: false,
+        createdAt: "2026-02-28T19:20:00.000Z",
+        updatedAt: "2026-02-28T19:20:00.000Z",
+      });
+
+      assert.equal(yield* repository.getLatestUserMessageAt({ threadId }), null);
+    }),
+  );
+
+  it.effect("getLatestUserMessageAt returns the newest user message timestamp", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.make("thread-latest-user-newest");
+      const otherThreadId = ThreadId.make("thread-latest-user-other");
+
+      const upsertMessage = (
+        messageId: string,
+        thread: typeof threadId,
+        role: "user" | "assistant",
+        createdAt: string,
+      ) =>
+        repository.upsert({
+          messageId: MessageId.make(messageId),
+          threadId: thread,
+          turnId: null,
+          role,
+          text: messageId,
+          isStreaming: false,
+          createdAt,
+          updatedAt: createdAt,
+        });
+
+      // Inserted out of order so the assertion depends on MAX, not insert order.
+      yield* upsertMessage("m-2", threadId, "user", "2026-02-28T19:30:02.000Z");
+      yield* upsertMessage("m-1", threadId, "user", "2026-02-28T19:30:01.000Z");
+      // A newer assistant message must not win.
+      yield* upsertMessage("m-3", threadId, "assistant", "2026-02-28T19:30:09.000Z");
+      // A newer user message on another thread must not leak in.
+      yield* upsertMessage("m-4", otherThreadId, "user", "2026-02-28T19:30:59.000Z");
+
+      assert.equal(
+        yield* repository.getLatestUserMessageAt({ threadId }),
+        "2026-02-28T19:30:02.000Z",
+      );
+    }),
+  );
 });
